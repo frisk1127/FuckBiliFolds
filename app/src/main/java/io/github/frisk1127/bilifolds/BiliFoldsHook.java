@@ -11,6 +11,7 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.lang.ref.WeakReference;
 
 import de.robv.android.xposed.IXposedHookLoadPackage;
 import de.robv.android.xposed.XC_MethodHook;
@@ -35,6 +36,9 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
     private static final ConcurrentLinkedQueue<ArrayList<Object>> FOLD_CACHE_QUEUE = new ConcurrentLinkedQueue<>();
     private static final ConcurrentHashMap<Object, String> CONTINUATION_OFFSET = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<Integer, String> RESP_OFFSET = new ConcurrentHashMap<>();
+    private static volatile WeakReference<Object> LAST_ADAPTER = new WeakReference<>(null);
+    private static volatile List<?> LAST_LIST = null;
+    private static volatile android.os.Handler MAIN_HANDLER = null;
 
     @Override
     public void handleLoadPackage(XC_LoadPackage.LoadPackageParam lpparam) {
@@ -52,6 +56,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         hookZipDataSource(cl);
         hookReplyMossKtx(cl);
         hookCoroutineResume(cl);
+        hookListAdapter(cl);
     }
 
     private static void hookReplyControl(ClassLoader cl) {
@@ -283,6 +288,36 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         });
     }
 
+    private static void hookListAdapter(ClassLoader cl) {
+        Class<?> c = XposedHelpers.findClassIfExists(
+                "androidx.recyclerview.widget.ListAdapter",
+                cl
+        );
+        if (c == null) {
+            log("ListAdapter class not found");
+            return;
+        }
+        XposedBridge.hookAllMethods(c, "submitList", new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam param) {
+                if (param.args == null || param.args.length == 0) return;
+                Object listObj = param.args[0];
+                if (!(listObj instanceof List)) return;
+                List<?> list = (List<?>) listObj;
+                Object adapter = param.thisObject;
+                if (!isCommentAdapter(adapter, list)) return;
+                List<?> replaced = maybeReplaceFoldCardsInList(list);
+                if (replaced != null) {
+                    param.args[0] = replaced;
+                    list = replaced;
+                    logN("submitList.replace", "submitList replace fold cards size=" + replaced.size());
+                }
+                LAST_ADAPTER = new WeakReference<>(adapter);
+                LAST_LIST = list;
+            }
+        });
+    }
+
     private static void hookZipDataSource(ClassLoader cl) {
         Class<?> c = XposedHelpers.findClassIfExists(
                 "com.bilibili.app.comment3.data.source.v1.ZipDataSourceV1",
@@ -496,9 +531,11 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             ArrayList<Object> existing = FOLD_CACHE_BY_OFFSET.computeIfAbsent(offset, k -> new ArrayList<>());
             mergeUniqueById(existing, bucket);
             logN("cache.offset." + tag, tag + " offset=" + offset + " add=" + bucket.size());
+            tryResubmitWithCache(offset);
         } else {
             FOLD_CACHE_QUEUE.add(bucket);
             logN("cache.queue." + tag, tag + " queued=" + bucket.size());
+            tryResubmitWithCache(null);
         }
     }
 
@@ -590,6 +627,30 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         return null;
     }
 
+    private static List<?> maybeReplaceFoldCardsInList(List<?> list) {
+        if (list == null || list.isEmpty()) return null;
+        ArrayList<Object> out = new ArrayList<>(list.size());
+        boolean changed = false;
+        for (Object item : list) {
+            if (isZipCard(item)) {
+                String offset = getZipCardOffset(item);
+                ArrayList<Object> cached = offset == null ? null : FOLD_CACHE_BY_OFFSET.get(offset);
+                if (cached == null || cached.isEmpty()) {
+                    out.add(item);
+                    continue;
+                }
+                for (Object o : cached) {
+                    forceUnfold(o);
+                    out.add(o);
+                }
+                changed = true;
+                continue;
+            }
+            out.add(item);
+        }
+        return changed ? out : null;
+    }
+
     private static boolean isZipCard(Object item) {
         return item != null && "vv.r1".equals(item.getClass().getName());
     }
@@ -655,6 +716,60 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         if (obj == null) return false;
         String name = obj.getClass().getName();
         return "vv.p0".equals(name);
+    }
+
+    private static boolean isCommentAdapter(Object adapter, List<?> list) {
+        if (adapter == null || list == null) return false;
+        String name = adapter.getClass().getName();
+        if (!name.contains("comment") && !name.contains("Comment")) return false;
+        int max = Math.min(50, list.size());
+        for (int i = 0; i < max; i++) {
+            Object item = list.get(i);
+            if (item == null) continue;
+            String cn = item.getClass().getName();
+            if ("com.bilibili.app.comment3.data.model.CommentItem".equals(cn) || "vv.r1".equals(cn)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static void tryResubmitWithCache(String offset) {
+        Object adapter = LAST_ADAPTER == null ? null : LAST_ADAPTER.get();
+        List<?> list = LAST_LIST;
+        if (adapter == null || list == null || list.isEmpty()) return;
+        List<?> replaced = maybeReplaceFoldCardsInList(list);
+        if (replaced == null) return;
+        postToMain(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    XposedHelpers.callMethod(adapter, "submitList", replaced);
+                    LAST_LIST = replaced;
+                    logN("submitList.resubmit", "resubmit list size=" + replaced.size());
+                } catch (Throwable t) {
+                    try {
+                        XposedHelpers.callMethod(adapter, "submitList", replaced, null);
+                        LAST_LIST = replaced;
+                        logN("submitList.resubmit2", "resubmit(list, null) size=" + replaced.size());
+                    } catch (Throwable ignored) {
+                        logN("submitList.fail", "resubmit failed: " + t.getClass().getName());
+                    }
+                }
+            }
+        });
+    }
+
+    private static void postToMain(Runnable r) {
+        try {
+            android.os.Handler h = MAIN_HANDLER;
+            if (h == null) {
+                h = new android.os.Handler(android.os.Looper.getMainLooper());
+                MAIN_HANDLER = h;
+            }
+            h.post(r);
+        } catch (Throwable ignored) {
+        }
     }
 
     private static boolean isKotlinFailure(Object obj) {
