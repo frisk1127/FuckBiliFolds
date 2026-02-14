@@ -6,6 +6,8 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import de.robv.android.xposed.IXposedHookLoadPackage;
 import de.robv.android.xposed.XC_MethodHook;
@@ -23,6 +25,8 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             "com.bilibili.app.dev"
     );
     private static volatile boolean loggedFoldStack = false;
+    private static final ConcurrentHashMap<String, AtomicInteger> LOG_COUNT = new ConcurrentHashMap<>();
+    private static final int LOG_LIMIT = 30;
 
     @Override
     public void handleLoadPackage(XC_LoadPackage.LoadPackageParam lpparam) {
@@ -30,7 +34,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             return;
         }
 
-        log("hooked pkg=" + lpparam.packageName);
+        log("hooked pkg=" + lpparam.packageName + " cl=" + lpparam.classLoader);
         ClassLoader cl = lpparam.classLoader;
         hookReplyControl(cl);
         hookSubjectControl(cl);
@@ -43,11 +47,15 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                 "com.bapis.bilibili.main.community.reply.v1.ReplyControl",
                 cl
         );
-        if (c == null) return;
+        if (c == null) {
+            log("ReplyControl class not found");
+            return;
+        }
 
         XposedHelpers.findAndHookMethod(c, "getIsFoldedReply", new XC_MethodReplacement() {
             @Override
             protected Object replaceHookedMethod(MethodHookParam param) {
+                logN("ReplyControl.getIsFoldedReply", "ReplyControl.getIsFoldedReply -> false");
                 return false;
             }
         });
@@ -55,6 +63,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         XposedHelpers.findAndHookMethod(c, "getHasFoldedReply", new XC_MethodReplacement() {
             @Override
             protected Object replaceHookedMethod(MethodHookParam param) {
+                logN("ReplyControl.getHasFoldedReply", "ReplyControl.getHasFoldedReply -> false");
                 return false;
             }
         });
@@ -65,11 +74,15 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                 "com.bapis.bilibili.main.community.reply.v1.SubjectControl",
                 cl
         );
-        if (c == null) return;
+        if (c == null) {
+            log("SubjectControl class not found");
+            return;
+        }
 
         XposedHelpers.findAndHookMethod(c, "getHasFoldedReply", new XC_MethodReplacement() {
             @Override
             protected Object replaceHookedMethod(MethodHookParam param) {
+                logN("SubjectControl.getHasFoldedReply", "SubjectControl.getHasFoldedReply -> false");
                 return false;
             }
         });
@@ -80,11 +93,15 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                 "com.bilibili.app.comment3.data.model.CommentItem",
                 cl
         );
-        if (c == null) return;
+        if (c == null) {
+            log("CommentItem class not found");
+            return;
+        }
 
         XposedHelpers.findAndHookMethod(c, "D", new XC_MethodReplacement() {
             @Override
             protected Object replaceHookedMethod(MethodHookParam param) {
+                logN("CommentItem.D", "CommentItem.D -> false");
                 return false;
             }
         });
@@ -92,6 +109,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         XposedHelpers.findAndHookMethod(c, "V", new XC_MethodReplacement() {
             @Override
             protected Object replaceHookedMethod(MethodHookParam param) {
+                logN("CommentItem.V", "CommentItem.V called");
                 Object list = null;
                 try {
                     list = XposedHelpers.callMethod(param.thisObject, "w");
@@ -122,7 +140,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                 if (foldList instanceof java.util.List && list instanceof java.util.List) {
                     java.util.List<?> child = (java.util.List<?>) list;
                     java.util.List<?> fold = (java.util.List<?>) foldList;
-                    log("child=" + child.size() + " fold=" + fold.size());
+                    logN("CommentItem.V.counts", "child=" + child.size() + " fold=" + fold.size());
                     if (!fold.isEmpty()) {
                         ArrayList<Object> merged = new ArrayList<>(child.size() + fold.size());
                         merged.addAll(child);
@@ -182,7 +200,10 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                 "com.bapis.bilibili.main.community.reply.v1.FoldCard",
                 cl
         );
-        if (c == null) return;
+        if (c == null) {
+            log("FoldCard class not found");
+            return;
+        }
 
         XposedHelpers.findAndHookMethod(c, "getFoldPagination", new XC_MethodHook() {
             @Override
@@ -193,10 +214,25 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                 log(Log.getStackTraceString(new Throwable("FoldPagination stack")));
             }
         });
+
+        XposedHelpers.findAndHookMethod(c, "hasFoldPagination", new XC_MethodHook() {
+            @Override
+            protected void afterHookedMethod(MethodHookParam param) {
+                Object result = param.getResult();
+                logN("FoldCard.hasFoldPagination", "FoldCard.hasFoldPagination -> " + result);
+            }
+        });
     }
 
     private static void log(String msg) {
         XposedBridge.log(TAG + ": " + msg);
         Log.i(TAG, msg);
+    }
+
+    private static void logN(String key, String msg) {
+        AtomicInteger count = LOG_COUNT.computeIfAbsent(key, k -> new AtomicInteger());
+        if (count.incrementAndGet() <= LOG_LIMIT) {
+            log(msg);
+        }
     }
 }
