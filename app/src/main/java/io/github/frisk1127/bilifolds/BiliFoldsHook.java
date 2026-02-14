@@ -23,7 +23,7 @@ import de.robv.android.xposed.callbacks.XC_LoadPackage;
 
 public class BiliFoldsHook implements IXposedHookLoadPackage {
     private static final String TAG = "BiliFolds";
-    private static final String BUILD_TAG = "build-2026-02-14-1935";
+    private static final String BUILD_TAG = "build-2026-02-14-2002";
     private static final List<String> TARGET_PACKAGES = Arrays.asList(
             "tv.danmaku.bili",
             "com.bilibili.app.in",
@@ -102,13 +102,6 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             }
         });
 
-        XposedHelpers.findAndHookMethod(c, "getHasFoldedReply", new XC_MethodReplacement() {
-            @Override
-            protected Object replaceHookedMethod(MethodHookParam param) {
-                logN("ReplyControl.getHasFoldedReply", "ReplyControl.getHasFoldedReply -> false");
-                return false;
-            }
-        });
     }
 
     private static void hookSubjectControl(ClassLoader cl) {
@@ -121,13 +114,6 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             return;
         }
 
-        XposedHelpers.findAndHookMethod(c, "getHasFoldedReply", new XC_MethodReplacement() {
-            @Override
-            protected Object replaceHookedMethod(MethodHookParam param) {
-                logN("SubjectControl.getHasFoldedReply", "SubjectControl.getHasFoldedReply -> false");
-                return false;
-            }
-        });
     }
 
     private static void hookCommentItem(ClassLoader cl) {
