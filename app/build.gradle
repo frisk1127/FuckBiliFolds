@@ -1,5 +1,3 @@
-import com.android.build.api.artifact.SingleArtifact
-
 plugins {
     alias(libs.plugins.android.application)
 }
@@ -31,23 +29,6 @@ android {
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_11
         targetCompatibility JavaVersion.VERSION_11
-    }
-}
-
-// Copy all variant APKs into a single directory for convenience.
-androidComponents {
-    onVariants(selector().all()) { variant ->
-        def outDir = new File(rootDir, "apk-out")
-        def capName = variant.name.capitalize()
-        def copyTask = tasks.register("copy${capName}Apk", Copy) {
-            from(variant.artifacts.get(SingleArtifact.APK))
-            into(outDir)
-            include("*.apk")
-            rename { fileName ->
-                "${project.name}-${variant.name}.apk"
-            }
-        }
-        tasks.named("assemble${capName}").configure { finalizedBy(copyTask) }
     }
 }
 
