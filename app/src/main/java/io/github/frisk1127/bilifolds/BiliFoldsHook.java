@@ -23,7 +23,7 @@ import de.robv.android.xposed.callbacks.XC_LoadPackage;
 
 public class BiliFoldsHook implements IXposedHookLoadPackage {
     private static final String TAG = "BiliFolds";
-    private static final String BUILD_TAG = "build-2026-02-14-2002";
+    private static final String BUILD_TAG = "build-" + BuildConfig.GIT_SHA;
     private static final List<String> TARGET_PACKAGES = Arrays.asList(
             "tv.danmaku.bili",
             "com.bilibili.app.in",
@@ -33,9 +33,18 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
     private static volatile boolean loggedFoldStack = false;
     private static final ConcurrentHashMap<String, AtomicInteger> LOG_COUNT = new ConcurrentHashMap<>();
     private static final int LOG_LIMIT = 80;
+    private static final boolean ENABLE_ADAPTER_REPLACE = false;
+    private static final boolean ENABLE_COMMENT_B1_REPLACE = true;
+    private static final boolean ENABLE_COMMENT_ITEM_V = false;
+    private static final boolean LOG_DETAIL_ARGS = true;
+    private static final boolean LOG_MOSS_ARGS = true;
+    private static final boolean LOG_ZIP_CARD = true;
     private static final ConcurrentHashMap<Long, ArrayList<Object>> FOLD_CACHE = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<String, ArrayList<Object>> FOLD_CACHE_BY_OFFSET = new ConcurrentHashMap<>();
     private static final ConcurrentLinkedQueue<ArrayList<Object>> FOLD_CACHE_QUEUE = new ConcurrentLinkedQueue<>();
+    private static final ConcurrentHashMap<String, Long> KNOWN_FOLD_OFFSET = new ConcurrentHashMap<>();
+    private static final ConcurrentHashMap<String, Long> OFFSET_TO_ROOT = new ConcurrentHashMap<>();
+    private static final ConcurrentHashMap<String, Boolean> WITH_CHILDREN_BY_KEY = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<Object, String> CONTINUATION_OFFSET = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<Integer, String> RESP_OFFSET = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<String, Boolean> AUTO_FETCHING = new ConcurrentHashMap<>();
@@ -47,7 +56,9 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
     private static final ThreadLocal<Boolean> RESUBMITTING = new ThreadLocal<>();
     private static volatile WeakReference<Object> LAST_COMMENT_ADAPTER = new WeakReference<>(null);
     private static volatile WeakReference<Object> LAST_SUBJECT_ID = new WeakReference<>(null);
+    private static volatile String LAST_SUBJECT_KEY = null;
     private static volatile String LAST_EXTRA = null;
+    private static volatile Object LAST_SORT_MODE = null;
     private static volatile ClassLoader APP_CL = null;
 
     @Override
@@ -134,72 +145,76 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             }
         });
 
-        XposedHelpers.findAndHookMethod(c, "V", new XC_MethodReplacement() {
-            @Override
-            protected Object replaceHookedMethod(MethodHookParam param) {
-                logN("CommentItem.V", "CommentItem.V called");
-                Object list = null;
-                try {
-                    list = XposedHelpers.callMethod(param.thisObject, "w");
-                } catch (Throwable ignored) {
+        if (ENABLE_COMMENT_ITEM_V) {
+            XposedHelpers.findAndHookMethod(c, "V", new XC_MethodReplacement() {
+                @Override
+                protected Object replaceHookedMethod(MethodHookParam param) {
+                    logN("CommentItem.V", "CommentItem.V called");
+                    Object list = null;
                     try {
-                        list = XposedHelpers.getObjectField(param.thisObject, "f55134w");
-                    } catch (Throwable ignored2) {
-                    log("failed to fetch childItemList");
+                        list = XposedHelpers.callMethod(param.thisObject, "w");
+                    } catch (Throwable ignored) {
+                        try {
+                            list = XposedHelpers.getObjectField(param.thisObject, "f55134w");
+                        } catch (Throwable ignored2) {
+                            log("failed to fetch childItemList");
+                        }
                     }
-                }
-                Object foldList = null;
-                try {
-                    Object foldInfo = XposedHelpers.callMethod(param.thisObject, "C");
-                    if (foldInfo != null) {
-                        foldList = XposedHelpers.callMethod(foldInfo, "d");
-                    }
-                } catch (Throwable ignored) {
+                    Object foldList = null;
                     try {
-                        Object foldInfo = XposedHelpers.getObjectField(param.thisObject, "f55133v");
+                        Object foldInfo = XposedHelpers.callMethod(param.thisObject, "C");
                         if (foldInfo != null) {
-                            foldList = XposedHelpers.getObjectField(foldInfo, "f55167b");
+                            foldList = XposedHelpers.callMethod(foldInfo, "d");
                         }
-                    } catch (Throwable ignored2) {
-                        log("failed to fetch foldChildItemList");
-                    }
-                }
-
-                if (foldList instanceof java.util.List && list instanceof java.util.List) {
-                    java.util.List<?> child = (java.util.List<?>) list;
-                    java.util.List<?> fold = (java.util.List<?>) foldList;
-                    long rootId = getRootId(param.thisObject);
-                    ArrayList<Object> cached = rootId > 0 ? FOLD_CACHE.get(rootId) : null;
-                    int cachedSize = cached == null ? 0 : cached.size();
-                    logN("CommentItem.V.counts", "child=" + child.size() + " fold=" + fold.size() + " cache=" + cachedSize + " root=" + rootId);
-                    if (!fold.isEmpty() || cachedSize > 0) {
-                        ArrayList<Object> merged = new ArrayList<>(child.size() + fold.size() + cachedSize);
-                        Set<Long> seen = new HashSet<>();
-                        appendUnique(merged, seen, child);
-                        appendUnique(merged, seen, fold);
-                        if (cached != null && !cached.isEmpty()) {
-                            appendUnique(merged, seen, cached);
-                        }
-                        Collections.sort(merged, new Comparator<Object>() {
-                            @Override
-                            public int compare(Object o1, Object o2) {
-                                long t1 = getCreateTime(o1);
-                                long t2 = getCreateTime(o2);
-                                if (t1 != t2) {
-                                    return Long.compare(t1, t2);
-                                }
-                                long id1 = getId(o1);
-                                long id2 = getId(o2);
-                                return Long.compare(id1, id2);
+                    } catch (Throwable ignored) {
+                        try {
+                            Object foldInfo = XposedHelpers.getObjectField(param.thisObject, "f55133v");
+                            if (foldInfo != null) {
+                                foldList = XposedHelpers.getObjectField(foldInfo, "f55167b");
                             }
-                        });
-                        return merged;
+                        } catch (Throwable ignored2) {
+                            log("failed to fetch foldChildItemList");
+                        }
                     }
-                }
 
-                return list;
-            }
-        });
+                    if (foldList instanceof java.util.List && list instanceof java.util.List) {
+                        java.util.List<?> child = (java.util.List<?>) list;
+                        java.util.List<?> fold = (java.util.List<?>) foldList;
+                        long rootId = getRootId(param.thisObject);
+                        ArrayList<Object> cached = rootId > 0 ? FOLD_CACHE.get(rootId) : null;
+                        int cachedSize = cached == null ? 0 : cached.size();
+                        logN("CommentItem.V.counts", "child=" + child.size() + " fold=" + fold.size() + " cache=" + cachedSize + " root=" + rootId);
+                        if (!fold.isEmpty() || cachedSize > 0) {
+                            ArrayList<Object> merged = new ArrayList<>(child.size() + fold.size() + cachedSize);
+                            Set<Long> seen = new HashSet<>();
+                            appendUnique(merged, seen, child);
+                            appendUnique(merged, seen, fold);
+                            if (cached != null && !cached.isEmpty()) {
+                                appendUnique(merged, seen, cached);
+                            }
+                            Collections.sort(merged, new Comparator<Object>() {
+                                @Override
+                                public int compare(Object o1, Object o2) {
+                                    long t1 = getCreateTime(o1);
+                                    long t2 = getCreateTime(o2);
+                                    if (t1 != t2) {
+                                        return Long.compare(t1, t2);
+                                    }
+                                    long id1 = getId(o1);
+                                    long id2 = getId(o2);
+                                    return Long.compare(id1, id2);
+                                }
+                            });
+                            return merged;
+                        }
+                    }
+
+                    return list;
+                }
+            });
+        } else {
+            log("CommentItem.V hook disabled");
+        }
     }
 
     private static long getCreateTime(Object item) {
@@ -246,6 +261,13 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                 if (loggedFoldStack) return;
                 loggedFoldStack = true;
                 log("FoldCard.getFoldPagination hit");
+                String offset = extractOffsetFromPagination(param.getResult());
+                markFoldOffset(offset);
+                long rootId = getFoldCardRootId(param.thisObject);
+                if (rootId != 0 && offset != null && !offset.isEmpty()) {
+                    OFFSET_TO_ROOT.put(offset, rootId);
+                    logN("foldCard.root", "FoldCard rootId=" + rootId + " offset=" + offset);
+                }
                 log(Log.getStackTraceString(new Throwable("FoldPagination stack")));
             }
         });
@@ -286,6 +308,11 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             protected void afterHookedMethod(MethodHookParam param) {
                 scanForFoldReplies("e.F0.result", param.getResult());
                 scanArgsForFoldReplies("e.F0.args", param.args);
+                Object result = param.getResult();
+                if (result != null && "vv.r1".equals(result.getClass().getName())) {
+                    String offset = getZipCardOffset(result);
+                    markFoldOffset(offset);
+                }
             }
         });
 
@@ -300,6 +327,10 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
     }
 
     private static void hookListAdapter(ClassLoader cl) {
+        if (!ENABLE_ADAPTER_REPLACE) {
+            log("hookListAdapter disabled");
+            return;
+        }
         Class<?> c = XposedHelpers.findClassIfExists(
                 "androidx.recyclerview.widget.ListAdapter",
                 cl
@@ -330,6 +361,10 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
     }
 
     private static void hookRecyclerViewAdapter(ClassLoader cl) {
+        if (!ENABLE_ADAPTER_REPLACE) {
+            log("hookRecyclerViewAdapter disabled");
+            return;
+        }
         Class<?> c = XposedHelpers.findClassIfExists(
                 "androidx.recyclerview.widget.RecyclerView$Adapter",
                 cl
@@ -422,24 +457,32 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                 logN("commentAdapter.capture", "capture CommentListAdapter");
             }
         });
-        XposedBridge.hookAllMethods(c, "b1", new XC_MethodHook() {
-            @Override
-            protected void beforeHookedMethod(MethodHookParam param) {
-                if (param.args == null || param.args.length == 0) return;
-                Object listObj = param.args[0];
-                if (!(listObj instanceof List)) return;
-                List<?> list = (List<?>) listObj;
-                List<?> replaced = replaceZipCardsInList(list, "CommentListAdapter.b1");
-                if (replaced != null) {
-                    param.args[0] = replaced;
-                    logN("adapter.b1.replace", "CommentListAdapter.b1 replace size=" + replaced.size());
+        if (ENABLE_COMMENT_B1_REPLACE) {
+            XposedBridge.hookAllMethods(c, "b1", new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam param) {
+                    if (param.args == null || param.args.length == 0) return;
+                    Object listObj = param.args[0];
+                    if (!(listObj instanceof List)) return;
+                    List<?> list = (List<?>) listObj;
+                    List<?> replaced = replaceZipCardsInList(list, "CommentListAdapter.b1");
+                    if (replaced != null) {
+                        param.args[0] = replaced;
+                        logN("adapter.b1.replace", "CommentListAdapter.b1 replace size=" + replaced.size());
+                    }
                 }
-            }
-        });
-        log("hooked CommentListAdapter.b1");
+            });
+            log("hooked CommentListAdapter.b1");
+        } else {
+            log("hooked CommentListAdapter (capture only)");
+        }
     }
 
     private static void hookCommentListDiffer(ClassLoader cl) {
+        if (!ENABLE_ADAPTER_REPLACE) {
+            log("hookCommentListDiffer disabled");
+            return;
+        }
         Class<?> c = XposedHelpers.findClassIfExists(
                 "com.bilibili.app.comment3.ui.adapter.CommentListDiffer",
                 cl
@@ -480,8 +523,10 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                 if (param.args == null || param.args.length < 2) return;
                 if (param.args[0] != null) {
                     LAST_SUBJECT_ID = new WeakReference<>(param.args[0]);
+                    updateSubjectKey(param.args[0]);
                 }
                 Object offset = param.args[1];
+                Object withChildrenObj = param.args.length >= 4 ? param.args[3] : null;
                 Object cont = param.args[param.args.length - 1];
                 if (offset instanceof String && cont != null) {
                     CONTINUATION_OFFSET.put(cont, (String) offset);
@@ -489,6 +534,11 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                     if ("null".equals(extra)) extra = "";
                     if (extra != null && !extra.isEmpty()) {
                         LAST_EXTRA = extra;
+                    }
+                    String key = makeOffsetKey((String) offset, getCurrentSubjectKey());
+                    if (key != null && withChildrenObj instanceof Boolean) {
+                        WITH_CHILDREN_BY_KEY.put(key, (Boolean) withChildrenObj);
+                        logN("ZipDataSourceV1.withChildren", "ZipDataSourceV1.a withChildren=" + withChildrenObj + " key=" + key);
                     }
                     logN("ZipDataSourceV1.a", "ZipDataSourceV1.a offset=" + offset + " extra=" + extra + " cont=" + cont.getClass().getName());
                 }
@@ -520,11 +570,18 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                 if (param.args == null || param.args.length < 6) return;
                 if (param.args[0] != null) {
                     LAST_SUBJECT_ID = new WeakReference<>(param.args[0]);
+                    updateSubjectKey(param.args[0]);
                 }
                 String extra = safeToString(param.args[5]);
                 if ("null".equals(extra)) extra = "";
                 if (extra != null && !extra.isEmpty()) {
                     LAST_EXTRA = extra;
+                }
+                if (param.args.length > 4 && param.args[4] != null) {
+                    LAST_SORT_MODE = param.args[4];
+                }
+                if (LOG_DETAIL_ARGS) {
+                    logDetailArgs("DetailListDataSourceV1.a", param.args);
                 }
             }
         });
@@ -564,8 +621,31 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                 } else {
                     logN("suspendFoldList.null", "suspendFoldList offset=null req=" + safeClass(req));
                 }
+                if (LOG_MOSS_ARGS) {
+                    logDetailArgs("ReplyMossKtxKt.suspendFoldList", param.args);
+                }
             }
         });
+        if (LOG_MOSS_ARGS) {
+            String[] names = new String[] {
+                    "suspendMainList",
+                    "suspendDetailList",
+                    "suspendReplyList",
+                    "suspendReplyDetail",
+                    "suspendCommentList",
+                    "suspendList",
+                    "suspendMainListV2",
+                    "suspendDetailListV2"
+            };
+            for (String name : names) {
+                XposedBridge.hookAllMethods(c, name, new XC_MethodHook() {
+                    @Override
+                    protected void beforeHookedMethod(MethodHookParam param) {
+                        logDetailArgs("ReplyMossKtxKt." + name, param.args);
+                    }
+                });
+            }
+        }
     }
 
     private static void hookCoroutineResume(ClassLoader cl) {
@@ -637,6 +717,76 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         }
     }
 
+    private static void logDetailArgs(String tag, Object[] args) {
+        if (args == null) return;
+        StringBuilder sb = new StringBuilder();
+        sb.append(tag).append(" args=").append(args.length);
+        for (int i = 0; i < args.length; i++) {
+            Object a = args[i];
+            sb.append(" [").append(i).append("]=").append(describeObj(a));
+        }
+        logN("detail.args." + tag, sb.toString());
+    }
+
+    private static String describeObj(Object obj) {
+        if (obj == null) return "null";
+        if (obj instanceof String || obj instanceof Number || obj instanceof Boolean || obj instanceof Enum) {
+            return obj.getClass().getName() + "(" + safeToString(obj) + ")";
+        }
+        String keyFields = dumpKeyFields(obj);
+        if (keyFields.isEmpty()) {
+            return obj.getClass().getName();
+        }
+        return obj.getClass().getName() + "{" + keyFields + "}";
+    }
+
+    private static String dumpKeyFields(Object obj) {
+        if (obj == null) return "";
+        StringBuilder sb = new StringBuilder();
+        Field[] fields = obj.getClass().getDeclaredFields();
+        for (Field f : fields) {
+            String n = f.getName();
+            if (!isKeyField(n)) continue;
+            try {
+                f.setAccessible(true);
+                Object v = f.get(obj);
+                if (v == null) continue;
+                if (v instanceof String || v instanceof Number || v instanceof Boolean || v instanceof Enum) {
+                    appendField(sb, n, safeToString(v));
+                } else {
+                    String off = extractOffsetFromPagination(v);
+                    if (off != null && !off.isEmpty()) {
+                        appendField(sb, n + ".offset", off);
+                    }
+                }
+            } catch (Throwable ignored) {
+            }
+        }
+        return sb.toString();
+    }
+
+    private static boolean isKeyField(String n) {
+        if (n == null) return false;
+        String s = n.toLowerCase();
+        return s.contains("rpid")
+                || s.contains("root")
+                || s.contains("parent")
+                || s.contains("oid")
+                || s.contains("type")
+                || s.contains("sort")
+                || s.contains("mode")
+                || s.contains("extra")
+                || s.contains("offset")
+                || s.contains("page")
+                || s.contains("cursor")
+                || s.contains("jump");
+    }
+
+    private static void appendField(StringBuilder sb, String name, String value) {
+        if (sb.length() > 0) sb.append(",");
+        sb.append(name).append("=").append(value);
+    }
+
     private static void scanForFoldReplies(String tag, Object obj) {
         if (obj == null) return;
         if (obj instanceof List) {
@@ -704,12 +854,17 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             }
             return;
         }
+        cacheFoldReplies(tag + ".root", list);
         ArrayList<Object> bucket = new ArrayList<>(list.size());
+        long rootId = 0L;
         for (Object o : list) {
             if (o == null) continue;
             if (!isCommentItem(o)) continue;
             forceUnfold(o);
             bucket.add(o);
+            if (rootId == 0L) {
+                rootId = getRootId(o);
+            }
         }
         if (bucket.isEmpty()) return;
         String realOffset = offset;
@@ -719,20 +874,25 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                 logN("cache.derive." + tag, tag + " derive offset=" + realOffset);
             }
         }
-        if (realOffset != null) {
-            ArrayList<Object> existing = FOLD_CACHE_BY_OFFSET.computeIfAbsent(realOffset, k -> new ArrayList<>());
-            mergeUniqueById(existing, bucket);
-            logN("cache.offset." + tag, tag + " offset=" + realOffset + " add=" + bucket.size());
-            tryResubmitWithCache(realOffset);
-            tryUpdateAdapterList(realOffset);
-            tryUpdateCommentAdapterList(realOffset);
-        } else {
-            FOLD_CACHE_QUEUE.add(bucket);
-            logN("cache.queue." + tag, tag + " queued=" + bucket.size());
-            tryResubmitWithCache(null);
-            tryUpdateAdapterList(null);
-            tryUpdateCommentAdapterList(null);
+        if (realOffset == null) {
+            logN("cache.nooffset." + tag, tag + " no offset, drop");
+            return;
         }
+        String key = makeOffsetKey(realOffset, getCurrentSubjectKey());
+        if (key == null) {
+            logN("cache.nokey." + tag, tag + " no key offset=" + realOffset);
+            return;
+        }
+        ArrayList<Object> existing = FOLD_CACHE_BY_OFFSET.computeIfAbsent(key, k -> new ArrayList<>());
+        mergeUniqueById(existing, bucket);
+        logN("cache.offset." + tag, tag + " offset=" + realOffset + " key=" + key + " add=" + bucket.size());
+        if (rootId != 0L) {
+            OFFSET_TO_ROOT.put(realOffset, rootId);
+            logN("cache.offset.root." + tag, tag + " offset=" + realOffset + " rootId=" + rootId);
+        }
+        tryResubmitWithCache(realOffset);
+        tryUpdateAdapterList(realOffset);
+        tryUpdateCommentAdapterList(realOffset);
     }
 
     private static boolean isCommentItem(Object item) {
@@ -764,7 +924,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
     private static long callLongMethod(Object item, String name) {
         try {
             Object v = XposedHelpers.callMethod(item, name);
-            if (v instanceof Long) return (Long) v;
+            if (v instanceof Number) return ((Number) v).longValue();
         } catch (Throwable ignored) {
         }
         return 0L;
@@ -784,18 +944,23 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         if (list == null || list.isEmpty()) return null;
         ArrayList<Object> out = new ArrayList<>(list.size());
         boolean changed = false;
-        for (Object item : list) {
+        Boolean desc = detectTimeOrderDesc(list);
+        for (int i = 0; i < list.size(); i++) {
+            Object item = list.get(i);
             if (isZipCard(item)) {
                 String offset = getZipCardOffset(item);
-                ArrayList<Object> cached = offset == null ? null : FOLD_CACHE_BY_OFFSET.get(offset);
-                if (cached == null || cached.isEmpty()) {
-                    int qSize = FOLD_CACHE_QUEUE.size();
-                    if (offset == null || qSize == 1) {
-                        cached = FOLD_CACHE_QUEUE.poll();
-                    }
+                if (LOG_ZIP_CARD) {
+                    logZipCard(tag, item, offset);
                 }
+                long rootHint = findPrevCommentRootId(list, i);
+                if (rootHint != 0 && offset != null && !offset.isEmpty()) {
+                    OFFSET_TO_ROOT.putIfAbsent(offset, rootHint);
+                    logN("zip.root.hint", "zipCard hint rootId=" + rootHint + " offset=" + offset + " tag=" + tag);
+                }
+                List<Object> cached = getCachedFoldListForZip(item, offset, desc);
                 if (cached != null && !cached.isEmpty()) {
-                    logN("replace." + tag, tag + " replace fold card offset=" + offset + " items=" + cached.size());
+                    String key = makeOffsetKey(offset, getCurrentSubjectKey());
+                    logN("replace." + tag, tag + " replace fold card offset=" + offset + " key=" + key + " items=" + cached.size());
                     for (Object o : cached) {
                         forceUnfold(o);
                         out.add(o);
@@ -803,8 +968,9 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                     changed = true;
                     continue;
                 } else {
-                    logN("replace.none." + tag, tag + " fold card no cache offset=" + offset);
-                    tryAutoFetchFoldList(offset);
+                    String key = makeOffsetKey(offset, getCurrentSubjectKey());
+                    logN("replace.none." + tag, tag + " fold card no cache offset=" + offset + " key=" + key);
+                    tryAutoFetchFoldList(offset, getCurrentSubjectKey());
                 }
             }
             out.add(item);
@@ -828,12 +994,22 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         if (list == null || list.isEmpty()) return null;
         ArrayList<Object> out = new ArrayList<>(list.size());
         boolean changed = false;
-        for (Object item : list) {
+        Boolean desc = detectTimeOrderDesc(list);
+        for (int i = 0; i < list.size(); i++) {
+            Object item = list.get(i);
             if (isZipCard(item)) {
                 String offset = getZipCardOffset(item);
-                ArrayList<Object> cached = offset == null ? null : FOLD_CACHE_BY_OFFSET.get(offset);
+                if (LOG_ZIP_CARD) {
+                    logZipCard("maybe", item, offset);
+                }
+                long rootHint = findPrevCommentRootId(list, i);
+                if (rootHint != 0 && offset != null && !offset.isEmpty()) {
+                    OFFSET_TO_ROOT.putIfAbsent(offset, rootHint);
+                    logN("zip.root.hint", "zipCard hint rootId=" + rootHint + " offset=" + offset + " tag=maybe");
+                }
+                List<Object> cached = getCachedFoldListForZip(item, offset, desc);
                 if (cached == null || cached.isEmpty()) {
-                    tryAutoFetchFoldList(offset);
+                    tryAutoFetchFoldList(offset, getCurrentSubjectKey());
                     out.add(item);
                     continue;
                 }
@@ -853,12 +1029,22 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         if (list == null || list.isEmpty()) return null;
         ArrayList<Object> out = new ArrayList<>(list.size());
         boolean changed = false;
-        for (Object item : list) {
+        Boolean desc = detectTimeOrderDesc(list);
+        for (int i = 0; i < list.size(); i++) {
+            Object item = list.get(i);
             if (isZipCard(item)) {
                 String offset = getZipCardOffset(item);
-                ArrayList<Object> cached = offset == null ? null : FOLD_CACHE_BY_OFFSET.get(offset);
+                if (LOG_ZIP_CARD) {
+                    logZipCard(tag, item, offset);
+                }
+                long rootHint = findPrevCommentRootId(list, i);
+                if (rootHint != 0 && offset != null && !offset.isEmpty()) {
+                    OFFSET_TO_ROOT.putIfAbsent(offset, rootHint);
+                    logN("zip.root.hint", "zipCard hint rootId=" + rootHint + " offset=" + offset + " tag=" + tag);
+                }
+                List<Object> cached = getCachedFoldListForZip(item, offset, desc);
                 if (cached == null || cached.isEmpty()) {
-                    tryAutoFetchFoldList(offset);
+                    tryAutoFetchFoldList(offset, getCurrentSubjectKey());
                     out.add(item);
                     continue;
                 }
@@ -867,7 +1053,8 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                     out.add(o);
                 }
                 changed = true;
-                logN("replace." + tag, tag + " replace fold card offset=" + offset + " items=" + cached.size());
+                String key = makeOffsetKey(offset, getCurrentSubjectKey());
+                logN("replace." + tag, tag + " replace fold card offset=" + offset + " key=" + key + " items=" + cached.size());
                 continue;
             }
             out.add(item);
@@ -875,8 +1062,139 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         return changed ? out : null;
     }
 
+    private static List<Object> getCachedFoldListForZip(Object zipCard, String offset, Boolean desc) {
+        long rootId = getZipCardRootId(zipCard);
+        if (rootId == 0 && offset != null) {
+            Long mapped = OFFSET_TO_ROOT.get(offset);
+            if (mapped != null) {
+                rootId = mapped;
+            }
+        }
+        ArrayList<Object> cached = null;
+        if (rootId > 0) {
+            cached = FOLD_CACHE.get(rootId);
+            if (cached != null && cached.isEmpty()) cached = null;
+        }
+        if (cached == null) {
+            String key = makeOffsetKey(offset, getCurrentSubjectKey());
+            cached = key == null ? null : FOLD_CACHE_BY_OFFSET.get(key);
+        }
+        if (cached == null || cached.isEmpty()) return null;
+        if (desc != null) {
+            sortByCreateTime(cached, desc);
+        }
+        return cached;
+    }
+
+    private static long findPrevCommentRootId(List<?> list, int index) {
+        if (list == null) return 0L;
+        for (int i = index - 1; i >= 0 && index - i <= 6; i--) {
+            Object item = list.get(i);
+            if (!isCommentItem(item)) continue;
+            long id = getId(item);
+            if (id != 0) return id;
+            long root = getRootId(item);
+            if (root != 0) return root;
+        }
+        return 0L;
+    }
+
     private static boolean isZipCard(Object item) {
-        return item != null && "vv.r1".equals(item.getClass().getName());
+        if (item == null || !"vv.r1".equals(item.getClass().getName())) return false;
+        Boolean clickable = callBooleanMethod(item, "f");
+        if (clickable != null && !clickable) return false;
+        String text = callStringMethod(item, "h");
+        if (text != null) {
+            String t = text.trim();
+            if (t.contains("没有了") || t.contains("找也没有")) return false;
+            if (t.contains("折叠") || t.contains("展开")) return true;
+            return false;
+        }
+        String offset = getZipCardOffset(item);
+        return isKnownFoldOffset(offset);
+    }
+
+    private static long getZipCardRootId(Object zipCard) {
+        if (zipCard == null) return 0L;
+        long v = 0L;
+        String[] methods = new String[] {
+                "getRootId",
+                "getRoot",
+                "getRpid",
+                "getReplyId",
+                "getId",
+                "d",
+                "e"
+        };
+        for (String m : methods) {
+            v = callLongMethod(zipCard, m);
+            if (v != 0) return v;
+        }
+        Field[] fields = zipCard.getClass().getDeclaredFields();
+        for (Field f : fields) {
+            String n = f.getName();
+            if (n == null) continue;
+            String s = n.toLowerCase();
+            if (!s.contains("rpid") && !s.contains("root") && !s.contains("reply") && !s.contains("id")) {
+                continue;
+            }
+            try {
+                f.setAccessible(true);
+                Object val = f.get(zipCard);
+                if (val instanceof Number) {
+                    v = ((Number) val).longValue();
+                    if (v != 0) return v;
+                }
+            } catch (Throwable ignored) {
+            }
+        }
+        return 0L;
+    }
+
+    private static long getFoldCardRootId(Object foldCard) {
+        if (foldCard == null) return 0L;
+        long v = 0L;
+        String[] methods = new String[] {
+                "getRoot",
+                "getRootId",
+                "getRootRpid",
+                "getRpid",
+                "getReplyId",
+                "getId",
+                "getBizId"
+        };
+        for (String m : methods) {
+            v = callLongMethod(foldCard, m);
+            if (v != 0) return v;
+        }
+        Field[] fields = foldCard.getClass().getDeclaredFields();
+        for (Field f : fields) {
+            String n = f.getName();
+            if (n == null) continue;
+            String s = n.toLowerCase();
+            if (!s.contains("rpid") && !s.contains("root") && !s.contains("reply") && !s.contains("id")) {
+                continue;
+            }
+            try {
+                f.setAccessible(true);
+                Object val = f.get(foldCard);
+                if (val instanceof Number) {
+                    v = ((Number) val).longValue();
+                    if (v != 0) return v;
+                }
+            } catch (Throwable ignored) {
+            }
+        }
+        return 0L;
+    }
+
+    private static void logZipCard(String tag, Object zipCard, String offset) {
+        if (zipCard == null) return;
+        long rootId = getZipCardRootId(zipCard);
+        String text = callStringMethod(zipCard, "h");
+        Boolean clickable = callBooleanMethod(zipCard, "f");
+        String fields = dumpKeyFields(zipCard);
+        logN("zip." + tag + "." + offset, "zipCard tag=" + tag + " offset=" + offset + " rootId=" + rootId + " clickable=" + clickable + " text=" + safeToString(text) + " fields=" + fields);
     }
 
     private static String getZipCardOffset(Object zipCard) {
@@ -1078,6 +1396,10 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         List<?> list = (List<?>) listObj;
         List<?> replaced = replaceZipCardsInList(list, "CommentListAdapter.cached");
         if (replaced == null) return;
+        if (!containsFooterCard(list)) {
+            logN("commentAdapter.skip", "CommentListAdapter skip update (footer not ready)");
+            return;
+        }
         postToMain(new Runnable() {
             @Override
             public void run() {
@@ -1166,6 +1488,22 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         return false;
     }
 
+    private static boolean containsFooterCard(List<?> list) {
+        if (list == null) return false;
+        for (Object item : list) {
+            if (isFooterCard(item)) return true;
+        }
+        return false;
+    }
+
+    private static boolean isFooterCard(Object item) {
+        if (item == null || !"vv.r1".equals(item.getClass().getName())) return false;
+        String text = callStringMethod(item, "h");
+        if (text == null) return false;
+        String t = text.trim();
+        return t.contains("没有了") || t.contains("找也没有") || t.contains("再怎么找") || t.contains("到底了");
+    }
+
     private static void postToMain(Runnable r) {
         try {
             android.os.Handler h = MAIN_HANDLER;
@@ -1197,6 +1535,49 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             dst.add(o);
             if (id != 0) seen.add(id);
         }
+    }
+
+    private static void sortByCreateTime(List<Object> list, boolean desc) {
+        if (list == null || list.size() < 2) return;
+        Collections.sort(list, new Comparator<Object>() {
+            @Override
+            public int compare(Object o1, Object o2) {
+                long t1 = getCreateTime(o1);
+                long t2 = getCreateTime(o2);
+                if (t1 == t2) {
+                    long id1 = getId(o1);
+                    long id2 = getId(o2);
+                    return Long.compare(id1, id2);
+                }
+                return desc ? Long.compare(t2, t1) : Long.compare(t1, t2);
+            }
+        });
+    }
+
+    private static Boolean detectTimeOrderDesc(List<?> list) {
+        if (list == null || list.size() < 3) return null;
+        int checked = 0;
+        int desc = 0;
+        int asc = 0;
+        long prev = 0L;
+        boolean havePrev = false;
+        for (Object item : list) {
+            if (!isCommentItem(item)) continue;
+            long t = getCreateTime(item);
+            if (t == 0) continue;
+            if (havePrev) {
+                if (t < prev) desc++;
+                else if (t > prev) asc++;
+                checked++;
+                if (checked >= 8) break;
+            }
+            prev = t;
+            havePrev = true;
+        }
+        if (checked < 3) return null;
+        if (desc >= asc + 2) return true;
+        if (asc >= desc + 2) return false;
+        return null;
     }
 
     private static List<?> extractList(Object obj) {
@@ -1246,6 +1627,35 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         return null;
     }
 
+    private static Boolean callBooleanMethod(Object obj, String name) {
+        if (obj == null) return null;
+        try {
+            Object v = XposedHelpers.callMethod(obj, name);
+            if (v instanceof Boolean) return (Boolean) v;
+        } catch (Throwable ignored) {
+        }
+        return null;
+    }
+
+    private static void markFoldOffset(String offset) {
+        if (offset == null || offset.isEmpty()) return;
+        KNOWN_FOLD_OFFSET.put(offset, System.currentTimeMillis());
+        if (KNOWN_FOLD_OFFSET.size() > 200) {
+            long now = System.currentTimeMillis();
+            for (String key : KNOWN_FOLD_OFFSET.keySet()) {
+                Long t = KNOWN_FOLD_OFFSET.get(key);
+                if (t == null || now - t > 5 * 60_000L) {
+                    KNOWN_FOLD_OFFSET.remove(key);
+                }
+            }
+        }
+    }
+
+    private static boolean isKnownFoldOffset(String offset) {
+        if (offset == null || offset.isEmpty()) return false;
+        return KNOWN_FOLD_OFFSET.containsKey(offset);
+    }
+
     private static Object getObjectField(Object obj, String name) {
         if (obj == null) return null;
         try {
@@ -1283,36 +1693,61 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
     }
 
     private static void tryAutoFetchFoldList(String offset) {
+        tryAutoFetchFoldList(offset, getCurrentSubjectKey());
+    }
+
+    private static void tryAutoFetchFoldList(String offset, String subjectKey) {
         if (offset == null || offset.isEmpty()) return;
-        if (FOLD_CACHE_BY_OFFSET.containsKey(offset)) return;
-        if (AUTO_FETCHING.putIfAbsent(offset, Boolean.TRUE) != null) return;
+        String key = makeOffsetKey(offset, subjectKey);
+        if (key != null && FOLD_CACHE_BY_OFFSET.containsKey(key)) return;
+        String fetchKey = key == null ? offset : key;
+        if (AUTO_FETCHING.putIfAbsent(fetchKey, Boolean.TRUE) != null) return;
         final Object subjectId = LAST_SUBJECT_ID == null ? null : LAST_SUBJECT_ID.get();
         if (subjectId == null) {
-            AUTO_FETCHING.remove(offset);
+            AUTO_FETCHING.remove(fetchKey);
             return;
         }
-        logN("auto.fetch.start", "auto fetch start offset=" + offset);
+        String realSubjectKey = subjectKeyFromSubject(subjectId);
+        if (realSubjectKey != null) {
+            LAST_SUBJECT_KEY = realSubjectKey;
+        }
+        boolean wc = true;
+        final long rootId = offset == null ? 0L : getRootForOffset(offset);
+        logN("auto.fetch.start", "auto fetch start offset=" + offset + " key=" + fetchKey + " subject=" + realSubjectKey + " withChildren=" + wc + " rootId=" + rootId);
         final String extra = LAST_EXTRA;
+        final boolean withChildrenFinal = wc;
         new Thread(new Runnable() {
             @Override
             public void run() {
                 try {
-                    Object p0 = fetchFoldList(subjectId, offset, extra);
-                    if (p0 != null) {
-                        cacheFoldListResult("auto.fetch", offset, p0);
-                    } else {
-                        logN("auto.fetch.empty", "auto fetch empty offset=" + offset);
+                    String curOffset = offset;
+                    int pages = 0;
+                    while (curOffset != null && !curOffset.isEmpty() && pages < 5) {
+                        Object p0 = fetchFoldList(subjectId, curOffset, extra, withChildrenFinal, rootId);
+                        if (p0 != null) {
+                            cacheFoldListResult("auto.fetch", offset, p0);
+                            String next = extractOffsetFromObj(p0);
+                            if (next == null || next.isEmpty() || next.equals(curOffset)) {
+                                break;
+                            }
+                            curOffset = next;
+                            pages++;
+                        } else {
+                            logN("auto.fetch.empty", "auto fetch empty offset=" + curOffset);
+                            break;
+                        }
                     }
                 } catch (Throwable t) {
                     logN("auto.fetch.fail", "auto fetch fail offset=" + offset + " err=" + t.getClass().getName());
+                    logN("auto.fetch.fail.stack", Log.getStackTraceString(t));
                 } finally {
-                    AUTO_FETCHING.remove(offset);
+                    AUTO_FETCHING.remove(fetchKey);
                 }
             }
         }, "BiliFoldsFetch").start();
     }
 
-    private static Object fetchFoldList(Object subjectId, String offset, String extra) {
+    private static Object fetchFoldList(Object subjectId, String offset, String extra, boolean withChildren, long rootId) {
         ClassLoader cl = subjectId.getClass().getClassLoader();
         if (cl == null) {
             cl = APP_CL;
@@ -1321,13 +1756,11 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             return null;
         }
         long oid = callLongMethod(subjectId, "a");
-        if (oid == 0) {
-            oid = callLongMethod(subjectId, "getOid");
-        }
+        if (oid == 0) oid = callLongMethod(subjectId, "getOid");
+        if (oid == 0) oid = getLongField(subjectId, "oid_");
         long type = callLongMethod(subjectId, "b");
-        if (type == 0) {
-            type = callLongMethod(subjectId, "getType");
-        }
+        if (type == 0) type = callLongMethod(subjectId, "getType");
+        if (type == 0) type = getLongField(subjectId, "type_");
         if (oid == 0 || type == 0) {
             return null;
         }
@@ -1351,17 +1784,120 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             return null;
         }
         Object paginationBuilder = XposedHelpers.callStaticMethod(feedPaginationCls, "newBuilder");
+        if (paginationBuilder == null) return null;
         XposedHelpers.callMethod(paginationBuilder, "setOffset", offset);
+        try {
+            XposedHelpers.callMethod(paginationBuilder, "setPageSize", 50);
+        } catch (Throwable ignored) {
+        }
+        tryCall(paginationBuilder, "setIsRefresh", true);
         Object pagination = XposedHelpers.callMethod(paginationBuilder, "build");
+        if (pagination == null) return null;
         Object reqBuilder = XposedHelpers.callStaticMethod(foldReqCls, "newBuilder");
+        if (reqBuilder == null) return null;
         XposedHelpers.callMethod(reqBuilder, "setOid", oid);
         XposedHelpers.callMethod(reqBuilder, "setType", type);
         XposedHelpers.callMethod(reqBuilder, "setExtra", extra == null ? "" : extra);
         XposedHelpers.callMethod(reqBuilder, "setPagination", pagination);
+        if (rootId != 0L) {
+            tryCall(reqBuilder, "setRoot", rootId);
+            tryCall(reqBuilder, "setRootRpid", rootId);
+            tryCall(reqBuilder, "setRpid", rootId);
+            tryCall(reqBuilder, "setReplyId", rootId);
+        }
+        tryCall(reqBuilder, "setWithChildren", withChildren);
+        int mode = getSortModeValue(LAST_SORT_MODE);
+        if (mode != Integer.MIN_VALUE) {
+            tryCall(reqBuilder, "setMode", mode);
+            tryCall(reqBuilder, "setSortMode", mode);
+            tryCall(reqBuilder, "setSort", mode);
+        }
         Object req = XposedHelpers.callMethod(reqBuilder, "build");
-        Object moss = XposedHelpers.newInstance(mossCls, null, 0, null, 7, null);
+        if (req == null) return null;
+        Object moss;
+        try {
+            moss = XposedHelpers.newInstance(mossCls);
+        } catch (Throwable ignored) {
+            moss = XposedHelpers.newInstance(mossCls, null, 0, null, 7, null);
+        }
+        if (moss == null) return null;
         Object resp = XposedHelpers.callMethod(moss, "foldList", req);
         if (resp == null) return null;
-        return XposedHelpers.callStaticMethod(mapCls, "D0", resp, true);
+        return XposedHelpers.callStaticMethod(mapCls, "D0", resp, withChildren);
+    }
+
+    private static void updateSubjectKey(Object subjectId) {
+        String key = subjectKeyFromSubject(subjectId);
+        if (key != null) {
+            LAST_SUBJECT_KEY = key;
+        }
+    }
+
+    private static long getRootForOffset(String offset) {
+        if (offset == null || offset.isEmpty()) return 0L;
+        Long v = OFFSET_TO_ROOT.get(offset);
+        return v == null ? 0L : v;
+    }
+
+    private static int getSortModeValue(Object sortMode) {
+        if (sortMode == null) return Integer.MIN_VALUE;
+        if (sortMode instanceof Number) {
+            return ((Number) sortMode).intValue();
+        }
+        try {
+            if (sortMode instanceof Enum) {
+                return ((Enum<?>) sortMode).ordinal();
+            }
+        } catch (Throwable ignored) {
+        }
+        int v = callIntMethod(sortMode, "getValue");
+        if (v != Integer.MIN_VALUE) return v;
+        v = callIntMethod(sortMode, "getMode");
+        if (v != Integer.MIN_VALUE) return v;
+        return callIntMethod(sortMode, "ordinal");
+    }
+
+    private static int callIntMethod(Object obj, String name) {
+        if (obj == null) return Integer.MIN_VALUE;
+        try {
+            Object v = XposedHelpers.callMethod(obj, name);
+            if (v instanceof Number) return ((Number) v).intValue();
+        } catch (Throwable ignored) {
+        }
+        return Integer.MIN_VALUE;
+    }
+
+    private static void tryCall(Object obj, String name, Object... args) {
+        if (obj == null || name == null) return;
+        try {
+            XposedHelpers.callMethod(obj, name, args);
+        } catch (Throwable ignored) {
+        }
+    }
+
+    private static String getCurrentSubjectKey() {
+        if (LAST_SUBJECT_KEY != null) return LAST_SUBJECT_KEY;
+        Object subjectId = LAST_SUBJECT_ID == null ? null : LAST_SUBJECT_ID.get();
+        String key = subjectKeyFromSubject(subjectId);
+        if (key != null) LAST_SUBJECT_KEY = key;
+        return key;
+    }
+
+    private static String subjectKeyFromSubject(Object subjectId) {
+        if (subjectId == null) return null;
+        long oid = callLongMethod(subjectId, "a");
+        if (oid == 0) oid = callLongMethod(subjectId, "getOid");
+        if (oid == 0) oid = getLongField(subjectId, "oid_");
+        long type = callLongMethod(subjectId, "b");
+        if (type == 0) type = callLongMethod(subjectId, "getType");
+        if (type == 0) type = getLongField(subjectId, "type_");
+        if (oid == 0 || type == 0) return null;
+        return oid + ":" + type;
+    }
+
+    private static String makeOffsetKey(String offset, String subjectKey) {
+        if (offset == null || offset.isEmpty()) return null;
+        if (subjectKey == null || subjectKey.isEmpty()) return offset;
+        return subjectKey + "|" + offset;
     }
 }

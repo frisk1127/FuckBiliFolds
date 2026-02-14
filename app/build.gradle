@@ -2,6 +2,45 @@ plugins {
     alias(libs.plugins.android.application)
 }
 
+def getGitSha = { ->
+    try {
+        def p = ["git", "rev-parse", "--short", "HEAD"].execute(null, rootDir)
+        p.waitFor()
+        if (p.exitValue() == 0) {
+            return p.text.trim()
+        }
+    } catch (Exception ignored) {
+    }
+    return "dev"
+}
+
+def isGitDirty = { ->
+    try {
+        def p = ["git", "status", "--porcelain"].execute(null, rootDir)
+        p.waitFor()
+        if (p.exitValue() == 0) {
+            return !p.text.trim().isEmpty()
+        }
+    } catch (Exception ignored) {
+    }
+    return false
+}
+
+def getGitCount = { ->
+    try {
+        def p = ["git", "rev-list", "--count", "HEAD"].execute(null, rootDir)
+        p.waitFor()
+        if (p.exitValue() == 0) {
+            return Integer.parseInt(p.text.trim())
+        }
+    } catch (Exception ignored) {
+    }
+    return 1
+}
+
+def gitSha = getGitSha() + (isGitDirty() ? "-dirty" : "")
+def gitCount = getGitCount()
+
 android {
     namespace 'io.github.frisk1127.bilifolds'
     compileSdk {
@@ -12,8 +51,10 @@ android {
         applicationId "io.github.frisk1127.bilifolds"
         minSdk 24
         targetSdk 36
-        versionCode 1
-        versionName "1.0"
+        versionCode gitCount
+        versionName gitSha
+        buildConfigField "String", "GIT_SHA", "\"${gitSha}\""
+        buildConfigField "int", "GIT_COUNT", "${gitCount}"
 
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -25,6 +66,9 @@ android {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }
+    }
+    buildFeatures {
+        buildConfig true
     }
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_11
