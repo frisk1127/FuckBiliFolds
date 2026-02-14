@@ -12,6 +12,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.lang.ref.WeakReference;
+import java.lang.reflect.Field;
 
 import de.robv.android.xposed.IXposedHookLoadPackage;
 import de.robv.android.xposed.XC_MethodHook;
@@ -39,6 +40,9 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
     private static volatile WeakReference<Object> LAST_ADAPTER = new WeakReference<>(null);
     private static volatile List<?> LAST_LIST = null;
     private static volatile android.os.Handler MAIN_HANDLER = null;
+    private static volatile WeakReference<Object> LAST_RV_ADAPTER = new WeakReference<>(null);
+    private static volatile Field LAST_RV_LIST_FIELD = null;
+    private static final ThreadLocal<Boolean> RESUBMITTING = new ThreadLocal<>();
 
     @Override
     public void handleLoadPackage(XC_LoadPackage.LoadPackageParam lpparam) {
@@ -57,6 +61,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         hookReplyMossKtx(cl);
         hookCoroutineResume(cl);
         hookListAdapter(cl);
+        hookRecyclerViewAdapter(cl);
     }
 
     private static void hookReplyControl(ClassLoader cl) {
@@ -318,6 +323,30 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         });
     }
 
+    private static void hookRecyclerViewAdapter(ClassLoader cl) {
+        Class<?> c = XposedHelpers.findClassIfExists(
+                "androidx.recyclerview.widget.RecyclerView$Adapter",
+                cl
+        );
+        if (c == null) {
+            log("RecyclerView.Adapter class not found");
+            return;
+        }
+        XC_MethodHook captureHook = new XC_MethodHook() {
+            @Override
+            protected void afterHookedMethod(MethodHookParam param) {
+                Object adapter = param.thisObject;
+                captureRecyclerAdapter(adapter);
+            }
+        };
+        XposedBridge.hookAllMethods(c, "notifyDataSetChanged", captureHook);
+        XposedBridge.hookAllMethods(c, "notifyItemRangeInserted", captureHook);
+        XposedBridge.hookAllMethods(c, "notifyItemRangeChanged", captureHook);
+        XposedBridge.hookAllMethods(c, "notifyItemRangeRemoved", captureHook);
+        XposedBridge.hookAllMethods(c, "notifyItemInserted", captureHook);
+        XposedBridge.hookAllMethods(c, "notifyItemRemoved", captureHook);
+    }
+
     private static void hookZipDataSource(ClassLoader cl) {
         Class<?> c = XposedHelpers.findClassIfExists(
                 "com.bilibili.app.comment3.data.source.v1.ZipDataSourceV1",
@@ -532,10 +561,12 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             mergeUniqueById(existing, bucket);
             logN("cache.offset." + tag, tag + " offset=" + offset + " add=" + bucket.size());
             tryResubmitWithCache(offset);
+            tryUpdateAdapterList(offset);
         } else {
             FOLD_CACHE_QUEUE.add(bucket);
             logN("cache.queue." + tag, tag + " queued=" + bucket.size());
             tryResubmitWithCache(null);
+            tryUpdateAdapterList(null);
         }
     }
 
@@ -744,6 +775,8 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             @Override
             public void run() {
                 try {
+                    if (Boolean.TRUE.equals(RESUBMITTING.get())) return;
+                    RESUBMITTING.set(true);
                     XposedHelpers.callMethod(adapter, "submitList", replaced);
                     LAST_LIST = replaced;
                     logN("submitList.resubmit", "resubmit list size=" + replaced.size());
@@ -755,9 +788,84 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                     } catch (Throwable ignored) {
                         logN("submitList.fail", "resubmit failed: " + t.getClass().getName());
                     }
+                } finally {
+                    RESUBMITTING.set(false);
                 }
             }
         });
+    }
+
+    private static void tryUpdateAdapterList(String offset) {
+        Object adapter = LAST_RV_ADAPTER == null ? null : LAST_RV_ADAPTER.get();
+        Field listField = LAST_RV_LIST_FIELD;
+        if (adapter == null || listField == null) return;
+        try {
+            Object listObj = listField.get(adapter);
+            if (!(listObj instanceof List)) return;
+            List<?> list = (List<?>) listObj;
+            List<?> replaced = maybeReplaceFoldCardsInList(list);
+            if (replaced == null) return;
+            postToMain(new Runnable() {
+                @Override
+                public void run() {
+                    try {
+                        if (Boolean.TRUE.equals(RESUBMITTING.get())) return;
+                        RESUBMITTING.set(true);
+                        listField.set(adapter, replaced);
+                        XposedHelpers.callMethod(adapter, "notifyDataSetChanged");
+                        logN("adapter.replace", "adapter replace list size=" + replaced.size() + " field=" + listField.getName());
+                    } catch (Throwable t) {
+                        logN("adapter.replace.fail", "adapter replace failed: " + t.getClass().getName());
+                    } finally {
+                        RESUBMITTING.set(false);
+                    }
+                }
+            });
+        } catch (Throwable ignored) {
+        }
+    }
+
+    private static void captureRecyclerAdapter(Object adapter) {
+        if (adapter == null) return;
+        if (Boolean.TRUE.equals(RESUBMITTING.get())) return;
+        Field f = findListField(adapter);
+        if (f == null) return;
+        LAST_RV_ADAPTER = new WeakReference<>(adapter);
+        LAST_RV_LIST_FIELD = f;
+        logN("adapter.capture", "capture adapter=" + adapter.getClass().getName() + " field=" + f.getName());
+    }
+
+    private static Field findListField(Object adapter) {
+        String name = adapter.getClass().getName();
+        if (!name.contains("comment") && !name.contains("Comment")) return null;
+        Field[] fields = adapter.getClass().getDeclaredFields();
+        for (Field f : fields) {
+            try {
+                f.setAccessible(true);
+                Object v = f.get(adapter);
+                if (!(v instanceof List)) continue;
+                List<?> list = (List<?>) v;
+                if (list.isEmpty()) continue;
+                if (containsCommentOrZip(list)) {
+                    return f;
+                }
+            } catch (Throwable ignored) {
+            }
+        }
+        return null;
+    }
+
+    private static boolean containsCommentOrZip(List<?> list) {
+        int max = Math.min(50, list.size());
+        for (int i = 0; i < max; i++) {
+            Object item = list.get(i);
+            if (item == null) continue;
+            String cn = item.getClass().getName();
+            if ("com.bilibili.app.comment3.data.model.CommentItem".equals(cn) || "vv.r1".equals(cn)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static void postToMain(Runnable r) {
