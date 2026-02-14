@@ -8,6 +8,7 @@ import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.WeakHashMap;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -39,12 +40,13 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
     private static final boolean LOG_DETAIL_ARGS = true;
     private static final boolean LOG_MOSS_ARGS = true;
     private static final boolean LOG_ZIP_CARD = true;
-    private static final boolean HIDE_FOLD_CARD_WHEN_EMPTY = true;
+    private static final boolean HIDE_FOLD_CARD_WHEN_EMPTY = false;
     private static final ConcurrentHashMap<Long, ArrayList<Object>> FOLD_CACHE = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<String, ArrayList<Object>> FOLD_CACHE_BY_OFFSET = new ConcurrentHashMap<>();
     private static final ConcurrentLinkedQueue<ArrayList<Object>> FOLD_CACHE_QUEUE = new ConcurrentLinkedQueue<>();
     private static final ConcurrentHashMap<String, Long> KNOWN_FOLD_OFFSET = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<String, Long> OFFSET_TO_ROOT = new ConcurrentHashMap<>();
+    private static final Set<Object> AUTO_EXPAND_ZIP = java.util.Collections.newSetFromMap(new WeakHashMap<Object, Boolean>());
     private static final ConcurrentHashMap<String, Boolean> WITH_CHILDREN_BY_KEY = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<Object, String> CONTINUATION_OFFSET = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<Integer, String> RESP_OFFSET = new ConcurrentHashMap<>();
@@ -86,6 +88,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         safeHook("hookDetailListModel", new Runnable() { @Override public void run() { hookDetailListModel(cl); } });
         safeHook("hookCommentListAdapter", new Runnable() { @Override public void run() { hookCommentListAdapter(cl); } });
         safeHook("hookCommentListDiffer", new Runnable() { @Override public void run() { hookCommentListDiffer(cl); } });
+        safeHook("hookZipCardView", new Runnable() { @Override public void run() { hookZipCardView(cl); } });
     }
 
     private static void safeHook(String name, Runnable r) {
@@ -514,6 +517,28 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         log("hooked CommentListDiffer.d");
     }
 
+    private static void hookZipCardView(ClassLoader cl) {
+        Class<?> c = XposedHelpers.findClassIfExists("vv.r1", cl);
+        if (c == null) {
+            log("vv.r1 class not found");
+            return;
+        }
+        XposedHelpers.findAndHookMethod(c, "h", new XC_MethodHook() {
+            @Override
+            protected void afterHookedMethod(MethodHookParam param) {
+                if (!isAutoExpand(param.thisObject)) return;
+                param.setResult("已自动展开折叠评论");
+            }
+        });
+        XposedHelpers.findAndHookMethod(c, "f", new XC_MethodHook() {
+            @Override
+            protected void afterHookedMethod(MethodHookParam param) {
+                if (!isAutoExpand(param.thisObject)) return;
+                param.setResult(false);
+            }
+        });
+        log("hooked vv.r1(h/f)");
+    }
     private static void hookZipDataSource(ClassLoader cl) {
         Class<?> c = XposedHelpers.findClassIfExists(
                 "com.bilibili.app.comment3.data.source.v1.ZipDataSourceV1",
@@ -1019,6 +1044,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                 if (cached == null || cached.isEmpty()) {
                     tryAutoFetchFoldList(offset, getCurrentSubjectKey());
                     if (!HIDE_FOLD_CARD_WHEN_EMPTY) {
+                        markAutoExpand(item);
                         out.add(item);
                     } else {
                         changed = true;
@@ -1058,6 +1084,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                 if (cached == null || cached.isEmpty()) {
                     tryAutoFetchFoldList(offset, getCurrentSubjectKey());
                     if (!HIDE_FOLD_CARD_WHEN_EMPTY) {
+                        markAutoExpand(item);
                         out.add(item);
                     } else {
                         changed = true;
@@ -1113,6 +1140,16 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             if (root != 0) return root;
         }
         return 0L;
+    }
+
+    private static void markAutoExpand(Object zipCard) {
+        if (zipCard == null) return;
+        AUTO_EXPAND_ZIP.add(zipCard);
+    }
+
+    private static boolean isAutoExpand(Object zipCard) {
+        if (zipCard == null) return false;
+        return AUTO_EXPAND_ZIP.contains(zipCard);
     }
 
     private static boolean isZipCard(Object item) {
