@@ -1086,10 +1086,9 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                 try {
                     if (Boolean.TRUE.equals(RESUBMITTING.get())) return;
                     RESUBMITTING.set(true);
-                    list.clear();
-                    for (Object o : replaced) {
-                        list.add(o);
-                    }
+                    List rawList = (List) list;
+                    rawList.clear();
+                    rawList.addAll((List) replaced);
                     XposedHelpers.callMethod(adapter, "notifyDataSetChanged");
                     logN("commentAdapter.update", "CommentListAdapter notifyDataSetChanged size=" + replaced.size());
                 } catch (Throwable t) {
