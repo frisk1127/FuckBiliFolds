@@ -345,6 +345,28 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         XposedBridge.hookAllMethods(c, "notifyItemRangeRemoved", captureHook);
         XposedBridge.hookAllMethods(c, "notifyItemInserted", captureHook);
         XposedBridge.hookAllMethods(c, "notifyItemRemoved", captureHook);
+
+        XposedBridge.hookAllMethods(c, "onBindViewHolder", new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam param) {
+                if (param.args == null || param.args.length < 2) return;
+                Object adapter = param.thisObject;
+                int pos = -1;
+                try {
+                    if (param.args[1] instanceof Integer) {
+                        pos = (Integer) param.args[1];
+                    }
+                } catch (Throwable ignored) {
+                }
+                if (pos < 0) return;
+                Field f = findListFieldByPosition(adapter, pos);
+                if (f != null) {
+                    LAST_RV_ADAPTER = new WeakReference<>(adapter);
+                    LAST_RV_LIST_FIELD = f;
+                    logN("adapter.capture.bind", "capture by bind adapter=" + adapter.getClass().getName() + " field=" + f.getName());
+                }
+            }
+        });
     }
 
     private static void hookZipDataSource(ClassLoader cl) {
@@ -837,7 +859,6 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
 
     private static Field findListField(Object adapter) {
         String name = adapter.getClass().getName();
-        if (!name.contains("comment") && !name.contains("Comment")) return null;
         Field[] fields = adapter.getClass().getDeclaredFields();
         for (Field f : fields) {
             try {
@@ -853,6 +874,32 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             }
         }
         return null;
+    }
+
+    private static Field findListFieldByPosition(Object adapter, int position) {
+        if (adapter == null) return null;
+        Field[] fields = adapter.getClass().getDeclaredFields();
+        for (Field f : fields) {
+            try {
+                f.setAccessible(true);
+                Object v = f.get(adapter);
+                if (!(v instanceof List)) continue;
+                List<?> list = (List<?>) v;
+                if (position < 0 || position >= list.size()) continue;
+                Object item = list.get(position);
+                if (isCommentOrZip(item)) {
+                    return f;
+                }
+            } catch (Throwable ignored) {
+            }
+        }
+        return null;
+    }
+
+    private static boolean isCommentOrZip(Object item) {
+        if (item == null) return false;
+        String cn = item.getClass().getName();
+        return "com.bilibili.app.comment3.data.model.CommentItem".equals(cn) || "vv.r1".equals(cn);
     }
 
     private static boolean containsCommentOrZip(List<?> list) {
