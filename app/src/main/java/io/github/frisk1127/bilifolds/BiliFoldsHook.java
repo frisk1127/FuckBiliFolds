@@ -288,8 +288,12 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
 
     private static void scanArgsForFoldReplies(String tag, Object[] args) {
         if (args == null) return;
-        for (Object a : args) {
-            scanForFoldReplies(tag, a);
+        for (int i = 0; i < args.length; i++) {
+            Object a = args[i];
+            if (a != null) {
+                logN("args." + tag, tag + " arg[" + i + "]=" + a.getClass().getName());
+            }
+            scanForFoldReplies(tag + ".arg" + i, a);
         }
     }
 
@@ -297,11 +301,14 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         if (obj == null) return;
         if (obj instanceof List) {
             List<?> list = (List<?>) obj;
+            String itemType = list.isEmpty() || list.get(0) == null ? "null" : list.get(0).getClass().getName();
+            logN("list." + tag, tag + " list size=" + list.size() + " item=" + itemType);
             if (!list.isEmpty()) {
                 cacheFoldReplies(tag, list);
             }
             return;
         }
+        logN("obj." + tag, tag + " obj=" + obj.getClass().getName());
         Class<?> c = obj.getClass();
         java.lang.reflect.Field[] fields = c.getDeclaredFields();
         for (java.lang.reflect.Field f : fields) {
@@ -311,6 +318,8 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                 if (v instanceof List) {
                     List<?> list = (List<?>) v;
                     if (!list.isEmpty()) {
+                        String itemType = list.get(0) == null ? "null" : list.get(0).getClass().getName();
+                        logN("field." + tag, tag + " field=" + f.getName() + " size=" + list.size() + " item=" + itemType);
                         cacheFoldReplies(tag + "." + f.getName(), list);
                     }
                 }
@@ -353,11 +362,16 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
 
     private static long getRootId(Object item) {
         if (item == null) return 0L;
-        long root = getLongField(item, "f55115d");
-        if (root == 0) {
-            root = getLongField(item, "f55116e");
-        }
-        return root;
+        long root = callLongMethod(item, "O");
+        if (root != 0) return root;
+        long parent = callLongMethod(item, "M");
+        if (parent != 0) return parent;
+        root = getLongField(item, "f55115d");
+        if (root != 0) return root;
+        parent = getLongField(item, "f55116e");
+        if (parent != 0) return parent;
+        long id = getId(item);
+        return id;
     }
 
     private static long getLongField(Object item, String name) {
@@ -366,6 +380,15 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         } catch (Throwable ignored) {
             return 0L;
         }
+    }
+
+    private static long callLongMethod(Object item, String name) {
+        try {
+            Object v = XposedHelpers.callMethod(item, name);
+            if (v instanceof Long) return (Long) v;
+        } catch (Throwable ignored) {
+        }
+        return 0L;
     }
 
     private static void forceUnfold(Object item) {
