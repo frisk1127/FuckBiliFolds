@@ -39,6 +39,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
     private static final boolean LOG_DETAIL_ARGS = true;
     private static final boolean LOG_MOSS_ARGS = true;
     private static final boolean LOG_ZIP_CARD = true;
+    private static final boolean HIDE_FOLD_CARD_WHEN_EMPTY = true;
     private static final ConcurrentHashMap<Long, ArrayList<Object>> FOLD_CACHE = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<String, ArrayList<Object>> FOLD_CACHE_BY_OFFSET = new ConcurrentHashMap<>();
     private static final ConcurrentLinkedQueue<ArrayList<Object>> FOLD_CACHE_QUEUE = new ConcurrentLinkedQueue<>();
@@ -276,7 +277,12 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             @Override
             protected void afterHookedMethod(MethodHookParam param) {
                 Object result = param.getResult();
-                logN("FoldCard.hasFoldPagination", "FoldCard.hasFoldPagination -> " + result);
+                String text = null;
+                try {
+                    text = (String) XposedHelpers.callMethod(param.thisObject, "getBottomText");
+                } catch (Throwable ignored) {
+                }
+                logN("FoldCard.hasFoldPagination", "FoldCard.hasFoldPagination -> " + result + " bottomText=" + safeToString(text));
             }
         });
     }
@@ -579,6 +585,8 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                 }
                 if (param.args.length > 4 && param.args[4] != null) {
                     LAST_SORT_MODE = param.args[4];
+                    int modeVal = getSortModeValue(param.args[4]);
+                    logN("sort.mode", "DetailListDataSourceV1 sort=" + safeToString(param.args[4]) + " value=" + modeVal);
                 }
                 if (LOG_DETAIL_ARGS) {
                     logDetailArgs("DetailListDataSourceV1.a", param.args);
@@ -1010,7 +1018,11 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                 List<Object> cached = getCachedFoldListForZip(item, offset, desc);
                 if (cached == null || cached.isEmpty()) {
                     tryAutoFetchFoldList(offset, getCurrentSubjectKey());
-                    out.add(item);
+                    if (!HIDE_FOLD_CARD_WHEN_EMPTY) {
+                        out.add(item);
+                    } else {
+                        changed = true;
+                    }
                     continue;
                 }
                 for (Object o : cached) {
@@ -1045,7 +1057,11 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                 List<Object> cached = getCachedFoldListForZip(item, offset, desc);
                 if (cached == null || cached.isEmpty()) {
                     tryAutoFetchFoldList(offset, getCurrentSubjectKey());
-                    out.add(item);
+                    if (!HIDE_FOLD_CARD_WHEN_EMPTY) {
+                        out.add(item);
+                    } else {
+                        changed = true;
+                    }
                     continue;
                 }
                 for (Object o : cached) {
@@ -1498,6 +1514,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
 
     private static boolean isFooterCard(Object item) {
         if (item == null || !"vv.r1".equals(item.getClass().getName())) return false;
+        if (isZipCard(item)) return false;
         String text = callStringMethod(item, "h");
         if (text == null) return false;
         String t = text.trim();
@@ -1812,6 +1829,17 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             tryCall(reqBuilder, "setSortMode", mode);
             tryCall(reqBuilder, "setSort", mode);
         }
+        // Fallback: set fields directly if setters are missing.
+        trySetField(reqBuilder, "pagination_", pagination);
+        if (rootId != 0L) {
+            trySetField(reqBuilder, "root_", rootId);
+            trySetField(reqBuilder, "rootRpid_", rootId);
+            trySetField(reqBuilder, "rpid_", rootId);
+            trySetField(reqBuilder, "replyId_", rootId);
+        }
+        if (mode != Integer.MIN_VALUE) {
+            trySetField(reqBuilder, "mode_", mode);
+        }
         Object req = XposedHelpers.callMethod(reqBuilder, "build");
         if (req == null) return null;
         Object moss;
@@ -1865,6 +1893,14 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         } catch (Throwable ignored) {
         }
         return Integer.MIN_VALUE;
+    }
+
+    private static void trySetField(Object obj, String name, Object value) {
+        if (obj == null || name == null) return;
+        try {
+            XposedHelpers.setObjectField(obj, name, value);
+        } catch (Throwable ignored) {
+        }
     }
 
     private static void tryCall(Object obj, String name, Object... args) {
