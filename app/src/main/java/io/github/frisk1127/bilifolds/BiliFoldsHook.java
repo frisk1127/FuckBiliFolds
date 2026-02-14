@@ -367,6 +367,11 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                     logN("resumeWith.fail", "resumeWith failure offset=" + offset + " result=" + safeClass(result));
                     return;
                 }
+                if (isZipListResult(result)) {
+                    cacheFoldListResult("resumeWith.p0", offset, result);
+                    logN("resumeWith.p0", "resumeWith p0 offset=" + offset + " result=" + safeClass(result));
+                    return;
+                }
                 if (isFoldListResp(result)) {
                     RESP_OFFSET.put(System.identityHashCode(result), offset);
                     logN("resumeWith.fold", "resumeWith foldResp offset=" + offset + " resp=" + safeClass(result));
@@ -550,8 +555,11 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             if (isZipCard(item)) {
                 String offset = getZipCardOffset(item);
                 ArrayList<Object> cached = offset == null ? null : FOLD_CACHE_BY_OFFSET.get(offset);
-                if ((cached == null || cached.isEmpty()) && offset == null) {
-                    cached = FOLD_CACHE_QUEUE.poll();
+                if (cached == null || cached.isEmpty()) {
+                    int qSize = FOLD_CACHE_QUEUE.size();
+                    if (offset == null || qSize == 1) {
+                        cached = FOLD_CACHE_QUEUE.poll();
+                    }
                 }
                 if (cached != null && !cached.isEmpty()) {
                     logN("replace." + tag, tag + " replace fold card offset=" + offset + " items=" + cached.size());
@@ -641,6 +649,12 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         if (obj == null) return false;
         String name = obj.getClass().getName();
         return name.endsWith("FoldListResp");
+    }
+
+    private static boolean isZipListResult(Object obj) {
+        if (obj == null) return false;
+        String name = obj.getClass().getName();
+        return "vv.p0".equals(name);
     }
 
     private static boolean isKotlinFailure(Object obj) {
