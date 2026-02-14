@@ -29,7 +29,6 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         hookReplyControl(cl);
         hookSubjectControl(cl);
         hookCommentItem(cl);
-        hookMixedCard(cl);
     }
 
     private static void hookReplyControl(ClassLoader cl) {
@@ -96,54 +95,37 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                         XposedBridge.log(TAG + ": failed to fetch childItemList");
                     }
                 }
+                Object foldList = null;
+                try {
+                    Object foldInfo = XposedHelpers.callMethod(param.thisObject, "C");
+                    if (foldInfo != null) {
+                        foldList = XposedHelpers.callMethod(foldInfo, "d");
+                    }
+                } catch (Throwable ignored) {
+                    try {
+                        Object foldInfo = XposedHelpers.getObjectField(param.thisObject, "f55133v");
+                        if (foldInfo != null) {
+                            foldList = XposedHelpers.getObjectField(foldInfo, "f55167b");
+                        }
+                    } catch (Throwable ignored2) {
+                        XposedBridge.log(TAG + ": failed to fetch foldChildItemList");
+                    }
+                }
+
+                if (foldList instanceof java.util.List && list instanceof java.util.List) {
+                    java.util.List<?> child = (java.util.List<?>) list;
+                    java.util.List<?> fold = (java.util.List<?>) foldList;
+                    if (!fold.isEmpty()) {
+                        java.util.ArrayList<Object> merged = new java.util.ArrayList<>(child.size() + fold.size());
+                        merged.addAll(child);
+                        merged.addAll(fold);
+                        return merged;
+                    }
+                }
+
                 return list;
             }
         });
     }
 
-    private static void hookMixedCard(ClassLoader cl) {
-        Class<?> c = XposedHelpers.findClassIfExists(
-                "com.bapis.bilibili.main.community.reply.v1.MixedCard",
-                cl
-        );
-        if (c == null) return;
-
-        XposedHelpers.findAndHookMethod(c, "getType", new XC_MethodHook() {
-            @Override
-            protected void afterHookedMethod(MethodHookParam param) {
-                Object result = param.getResult();
-                if (result instanceof Enum) {
-                    Enum<?> e = (Enum<?>) result;
-                    if ("FOLD".equals(e.name())) {
-                        try {
-                            Object unknown = Enum.valueOf(e.getDeclaringClass(), "UNKNOWN");
-                            param.setResult(unknown);
-                        } catch (Throwable ignored) {
-                            param.setResult(result);
-                        }
-                    }
-                }
-            }
-        });
-
-        XposedHelpers.findAndHookMethod(c, "getTypeValue", new XC_MethodHook() {
-            @Override
-            protected void afterHookedMethod(MethodHookParam param) {
-                Object result = param.getResult();
-                if (result instanceof Integer) {
-                    int v = (Integer) result;
-                    if (v == 2) {
-                        param.setResult(0);
-                    }
-                }
-            }
-        });
-
-        XposedHelpers.findAndHookMethod(c, "hasFold", new XC_MethodReplacement() {
-            @Override
-            protected Object replaceHookedMethod(MethodHookParam param) {
-                return false;
-            }
-        });
-    }
 }
