@@ -23,7 +23,7 @@ import de.robv.android.xposed.callbacks.XC_LoadPackage;
 
 public class BiliFoldsHook implements IXposedHookLoadPackage {
     private static final String TAG = "BiliFolds";
-    private static final String BUILD_TAG = "build-2026-02-14-1826";
+    private static final String BUILD_TAG = "build-2026-02-14-1905";
     private static final List<String> TARGET_PACKAGES = Arrays.asList(
             "tv.danmaku.bili",
             "com.bilibili.app.in",
@@ -366,27 +366,37 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         XposedBridge.hookAllMethods(c, "notifyItemInserted", captureHook);
         XposedBridge.hookAllMethods(c, "notifyItemRemoved", captureHook);
 
-        XposedBridge.hookAllMethods(c, "onBindViewHolder", new XC_MethodHook() {
-            @Override
-            protected void beforeHookedMethod(MethodHookParam param) {
-                if (param.args == null || param.args.length < 2) return;
-                Object adapter = param.thisObject;
-                int pos = -1;
-                try {
-                    if (param.args[1] instanceof Integer) {
-                        pos = (Integer) param.args[1];
+        Class<?> vh = XposedHelpers.findClassIfExists(
+                "androidx.recyclerview.widget.RecyclerView$ViewHolder",
+                cl
+        );
+        if (vh != null) {
+            try {
+                XposedHelpers.findAndHookMethod(c, "onBindViewHolder", vh, int.class, List.class, new XC_MethodHook() {
+                    @Override
+                    protected void beforeHookedMethod(MethodHookParam param) {
+                        if (param.args == null || param.args.length < 2) return;
+                        Object adapter = param.thisObject;
+                        int pos = -1;
+                        try {
+                            if (param.args[1] instanceof Integer) {
+                                pos = (Integer) param.args[1];
+                            }
+                        } catch (Throwable ignored) {
+                        }
+                        if (pos < 0) return;
+                        Field f = findListFieldByPosition(adapter, pos);
+                        if (f != null) {
+                            LAST_RV_ADAPTER = new WeakReference<>(adapter);
+                            LAST_RV_LIST_FIELD = f;
+                            logN("adapter.capture.bind", "capture by bind adapter=" + adapter.getClass().getName() + " field=" + f.getName());
+                        }
                     }
-                } catch (Throwable ignored) {
-                }
-                if (pos < 0) return;
-                Field f = findListFieldByPosition(adapter, pos);
-                if (f != null) {
-                    LAST_RV_ADAPTER = new WeakReference<>(adapter);
-                    LAST_RV_LIST_FIELD = f;
-                    logN("adapter.capture.bind", "capture by bind adapter=" + adapter.getClass().getName() + " field=" + f.getName());
-                }
+                });
+            } catch (Throwable t) {
+                log("hook RecyclerView.Adapter.onBindViewHolder skip: " + t.getClass().getName());
             }
-        });
+        }
     }
 
     private static void hookDetailListModel(ClassLoader cl) {
