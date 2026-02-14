@@ -56,7 +56,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             return;
         }
 
-        log("active " + BUILD_TAG + " pkg=" + lpparam.packageName + " uid=" + lpparam.uid);
+        log("active " + BUILD_TAG + " pkg=" + lpparam.packageName);
         log("hooked pkg=" + lpparam.packageName + " cl=" + lpparam.classLoader);
         ClassLoader cl = lpparam.classLoader;
         APP_CL = cl;
