@@ -5,7 +5,9 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -27,6 +29,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
     private static volatile boolean loggedFoldStack = false;
     private static final ConcurrentHashMap<String, AtomicInteger> LOG_COUNT = new ConcurrentHashMap<>();
     private static final int LOG_LIMIT = 30;
+    private static final ConcurrentHashMap<Long, ArrayList<Object>> FOLD_CACHE = new ConcurrentHashMap<>();
 
     @Override
     public void handleLoadPackage(XC_LoadPackage.LoadPackageParam lpparam) {
@@ -40,6 +43,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         hookSubjectControl(cl);
         hookCommentItem(cl);
         hookFoldCardDebug(cl);
+        hookDataSourceDebug(cl);
     }
 
     private static void hookReplyControl(ClassLoader cl) {
@@ -140,11 +144,18 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                 if (foldList instanceof java.util.List && list instanceof java.util.List) {
                     java.util.List<?> child = (java.util.List<?>) list;
                     java.util.List<?> fold = (java.util.List<?>) foldList;
-                    logN("CommentItem.V.counts", "child=" + child.size() + " fold=" + fold.size());
-                    if (!fold.isEmpty()) {
-                        ArrayList<Object> merged = new ArrayList<>(child.size() + fold.size());
-                        merged.addAll(child);
-                        merged.addAll(fold);
+                    long rootId = getRootId(param.thisObject);
+                    ArrayList<Object> cached = rootId > 0 ? FOLD_CACHE.get(rootId) : null;
+                    int cachedSize = cached == null ? 0 : cached.size();
+                    logN("CommentItem.V.counts", "child=" + child.size() + " fold=" + fold.size() + " cache=" + cachedSize + " root=" + rootId);
+                    if (!fold.isEmpty() || cachedSize > 0) {
+                        ArrayList<Object> merged = new ArrayList<>(child.size() + fold.size() + cachedSize);
+                        Set<Long> seen = new HashSet<>();
+                        appendUnique(merged, seen, child);
+                        appendUnique(merged, seen, fold);
+                        if (cached != null && !cached.isEmpty()) {
+                            appendUnique(merged, seen, cached);
+                        }
                         Collections.sort(merged, new Comparator<Object>() {
                             @Override
                             public int compare(Object o1, Object o2) {
@@ -224,6 +235,33 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         });
     }
 
+    private static void hookDataSourceDebug(ClassLoader cl) {
+        Class<?> c = XposedHelpers.findClassIfExists(
+                "com.bilibili.app.comment3.data.source.v1.e",
+                cl
+        );
+        if (c == null) {
+            log("data source class e not found");
+            return;
+        }
+
+        XposedBridge.hookAllMethods(c, "A0", new XC_MethodHook() {
+            @Override
+            protected void afterHookedMethod(MethodHookParam param) {
+                scanForFoldReplies("e.A0.result", param.getResult());
+                scanArgsForFoldReplies("e.A0.args", param.args);
+            }
+        });
+
+        XposedBridge.hookAllMethods(c, "F0", new XC_MethodHook() {
+            @Override
+            protected void afterHookedMethod(MethodHookParam param) {
+                scanForFoldReplies("e.F0.result", param.getResult());
+                scanArgsForFoldReplies("e.F0.args", param.args);
+            }
+        });
+    }
+
     private static void log(String msg) {
         XposedBridge.log(TAG + ": " + msg);
         Log.i(TAG, msg);
@@ -233,6 +271,108 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         AtomicInteger count = LOG_COUNT.computeIfAbsent(key, k -> new AtomicInteger());
         if (count.incrementAndGet() <= LOG_LIMIT) {
             log(msg);
+        }
+    }
+
+    private static void appendUnique(ArrayList<Object> out, Set<Long> seen, List<?> list) {
+        for (Object o : list) {
+            if (o == null) continue;
+            long id = getId(o);
+            if (id != 0 && !seen.add(id)) {
+                continue;
+            }
+            forceUnfold(o);
+            out.add(o);
+        }
+    }
+
+    private static void scanArgsForFoldReplies(String tag, Object[] args) {
+        if (args == null) return;
+        for (Object a : args) {
+            scanForFoldReplies(tag, a);
+        }
+    }
+
+    private static void scanForFoldReplies(String tag, Object obj) {
+        if (obj == null) return;
+        if (obj instanceof List) {
+            List<?> list = (List<?>) obj;
+            if (!list.isEmpty()) {
+                cacheFoldReplies(tag, list);
+            }
+            return;
+        }
+        Class<?> c = obj.getClass();
+        java.lang.reflect.Field[] fields = c.getDeclaredFields();
+        for (java.lang.reflect.Field f : fields) {
+            try {
+                f.setAccessible(true);
+                Object v = f.get(obj);
+                if (v instanceof List) {
+                    List<?> list = (List<?>) v;
+                    if (!list.isEmpty()) {
+                        cacheFoldReplies(tag + "." + f.getName(), list);
+                    }
+                }
+            } catch (Throwable ignored) {
+            }
+        }
+    }
+
+    private static void cacheFoldReplies(String tag, List<?> list) {
+        int cached = 0;
+        for (Object o : list) {
+            if (!isCommentItem(o)) continue;
+            long rootId = getRootId(o);
+            if (rootId <= 0) continue;
+            ArrayList<Object> bucket = FOLD_CACHE.computeIfAbsent(rootId, k -> new ArrayList<>());
+            long id = getId(o);
+            boolean exists = false;
+            if (id != 0) {
+                for (Object e : bucket) {
+                    if (getId(e) == id) {
+                        exists = true;
+                        break;
+                    }
+                }
+            }
+            if (!exists) {
+                forceUnfold(o);
+                bucket.add(o);
+                cached++;
+            }
+        }
+        if (cached > 0) {
+            logN("cache." + tag, "cache " + tag + " add=" + cached);
+        }
+    }
+
+    private static boolean isCommentItem(Object item) {
+        return item != null && "com.bilibili.app.comment3.data.model.CommentItem".equals(item.getClass().getName());
+    }
+
+    private static long getRootId(Object item) {
+        if (item == null) return 0L;
+        long root = getLongField(item, "f55115d");
+        if (root == 0) {
+            root = getLongField(item, "f55116e");
+        }
+        return root;
+    }
+
+    private static long getLongField(Object item, String name) {
+        try {
+            return XposedHelpers.getLongField(item, name);
+        } catch (Throwable ignored) {
+            return 0L;
+        }
+    }
+
+    private static void forceUnfold(Object item) {
+        if (item == null) return;
+        try {
+            XposedHelpers.setBooleanField(item, "f55132u", false);
+        } catch (Throwable ignored) {
         }
     }
 }
