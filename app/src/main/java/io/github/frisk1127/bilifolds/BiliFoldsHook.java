@@ -62,6 +62,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         hookCoroutineResume(cl);
         hookListAdapter(cl);
         hookRecyclerViewAdapter(cl);
+        hookDetailListModel(cl);
     }
 
     private static void hookReplyControl(ClassLoader cl) {
@@ -367,6 +368,27 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                 }
             }
         });
+    }
+
+    private static void hookDetailListModel(ClassLoader cl) {
+        Class<?> c = XposedHelpers.findClassIfExists("vv.o", cl);
+        if (c == null) {
+            log("vv.o class not found");
+            return;
+        }
+        XposedBridge.hookAllMethods(c, "a", new XC_MethodHook() {
+            @Override
+            protected void afterHookedMethod(MethodHookParam param) {
+                Object result = param.getResult();
+                if (!(result instanceof List)) return;
+                List<?> list = (List<?>) result;
+                List<?> replaced = replaceZipCardsInList(list, "vv.o.a");
+                if (replaced != null) {
+                    param.setResult(replaced);
+                }
+            }
+        });
+        log("hooked vv.o.a");
     }
 
     private static void hookZipDataSource(ClassLoader cl) {
@@ -697,6 +719,31 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                     out.add(o);
                 }
                 changed = true;
+                continue;
+            }
+            out.add(item);
+        }
+        return changed ? out : null;
+    }
+
+    private static List<?> replaceZipCardsInList(List<?> list, String tag) {
+        if (list == null || list.isEmpty()) return null;
+        ArrayList<Object> out = new ArrayList<>(list.size());
+        boolean changed = false;
+        for (Object item : list) {
+            if (isZipCard(item)) {
+                String offset = getZipCardOffset(item);
+                ArrayList<Object> cached = offset == null ? null : FOLD_CACHE_BY_OFFSET.get(offset);
+                if (cached == null || cached.isEmpty()) {
+                    out.add(item);
+                    continue;
+                }
+                for (Object o : cached) {
+                    forceUnfold(o);
+                    out.add(o);
+                }
+                changed = true;
+                logN("replace." + tag, tag + " replace fold card offset=" + offset + " items=" + cached.size());
                 continue;
             }
             out.add(item);
