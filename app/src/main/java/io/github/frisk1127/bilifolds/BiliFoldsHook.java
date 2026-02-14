@@ -23,6 +23,7 @@ import de.robv.android.xposed.callbacks.XC_LoadPackage;
 
 public class BiliFoldsHook implements IXposedHookLoadPackage {
     private static final String TAG = "BiliFolds";
+    private static final String BUILD_TAG = "build-2026-02-14-1826";
     private static final List<String> TARGET_PACKAGES = Arrays.asList(
             "tv.danmaku.bili",
             "com.bilibili.app.in",
@@ -55,6 +56,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             return;
         }
 
+        log("active " + BUILD_TAG + " pkg=" + lpparam.packageName + " uid=" + lpparam.uid);
         log("hooked pkg=" + lpparam.packageName + " cl=" + lpparam.classLoader);
         ClassLoader cl = lpparam.classLoader;
         APP_CL = cl;
