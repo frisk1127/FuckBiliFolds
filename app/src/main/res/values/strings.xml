@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">FuckBiliFolds</string>
+    <string name="xposed_desc">Disable Bilibili folded replies</string>
+</resources>
