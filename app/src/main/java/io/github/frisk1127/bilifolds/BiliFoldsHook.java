@@ -30,11 +30,11 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             "com.bilibili.app.dev"
     );
 
-    private static final String FOLD_TAG_TEXT = "折叠";
-    private static final String FOLD_TAG_TEXT_COLOR_DAY = "#FF888888";
-    private static final String FOLD_TAG_TEXT_COLOR_NIGHT = "#FFAAAAAA";
-    private static final String FOLD_TAG_BG_DAY = "#00000000";
-    private static final String FOLD_TAG_BG_NIGHT = "#00000000";
+    private static final String FOLD_TAG_TEXT = "折叠评论";
+    private static final String FOLD_TAG_TEXT_COLOR_DAY = "#FFE67E22";
+    private static final String FOLD_TAG_TEXT_COLOR_NIGHT = "#FFFFC107";
+    private static final String FOLD_TAG_BG_DAY = "#1AE67E22";
+    private static final String FOLD_TAG_BG_NIGHT = "#33FFC107";
     private static final String FOLD_TAG_JUMP = "";
 
     private static final ConcurrentHashMap<Long, ArrayList<Object>> FOLD_CACHE = new ConcurrentHashMap<>();
@@ -55,9 +55,6 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
     private static final ThreadLocal<Boolean> RESUBMITTING = new ThreadLocal<>();
     private static volatile android.os.Handler MAIN_HANDLER = null;
     private static volatile ClassLoader APP_CL = null;
-
-    private static volatile Object FOLD_TAG_TEMPLATE = null;
-    private static volatile ClassLoader FOLD_TAG_CL = null;
 
     @Override
     public void handleLoadPackage(XC_LoadPackage.LoadPackageParam lpparam) {
@@ -362,6 +359,10 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             if (isZipCard(item)) {
                 String offset = getZipCardOffset(item);
                 List<Object> cached = getCachedFoldListForZip(item, offset, desc);
+                long rootCandidate = getZipCardRootId(item);
+                if (rootCandidate == 0L && offset != null) {
+                    rootCandidate = getRootForOffset(offset);
+                }
                 if ((cached == null || cached.isEmpty()) && offset != null) {
                     long rootHint = findPrevCommentRootId(list, i);
                     if (rootHint > 0) {
@@ -384,14 +385,15 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                 int useful = 0;
                 for (Object o : cached) {
                     long id = getId(o);
-                    if (getRootId(o) != id) {
+                    boolean isRootComment = rootCandidate != 0L && id == rootCandidate;
+                    if (!isRootComment) {
                         useful++;
                     }
                     if (id != 0 && existingIds.contains(id)) {
                         continue;
                     }
                     forceUnfold(o);
-                    if (getRootId(o) != id) {
+                    if (!isRootComment) {
                         markFoldedTag(o);
                     }
                     out.add(o);
@@ -870,6 +872,15 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         }
     }
 
+    private static Object tryNewInstance(Class<?> cls, Object... args) {
+        if (cls == null) return null;
+        try {
+            return XposedHelpers.newInstance(cls, args);
+        } catch (Throwable ignored) {
+            return null;
+        }
+    }
+
     private static void forceUnfold(Object item) {
         if (item == null) return;
         try {
@@ -886,7 +897,6 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         } catch (Throwable ignored) {
         }
         List<?> tags = getCommentTags(item);
-        if (tags == null) return;
         if (containsFoldTag(tags)) {
             try {
                 XposedHelpers.setAdditionalInstanceField(item, "BiliFoldsTag", Boolean.TRUE);
@@ -896,13 +906,25 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         }
         Object tag = buildFoldTag(item.getClass().getClassLoader());
         if (tag == null) return;
-        ArrayList<Object> out = new ArrayList<>(tags.size() + 1);
-        out.addAll((List<?>) tags);
+        ArrayList<Object> out = new ArrayList<>((tags == null ? 0 : tags.size()) + 1);
+        if (tags != null) {
+            out.addAll((List<?>) tags);
+        }
         out.add(tag);
+        boolean applied = false;
         try {
             XposedHelpers.setObjectField(item, "f55127p", out);
+            applied = true;
         } catch (Throwable ignored) {
         }
+        if (!applied) {
+            try {
+                XposedHelpers.callMethod(item, "setTags", out);
+                applied = true;
+            } catch (Throwable ignored) {
+            }
+        }
+        if (!applied) return;
         try {
             XposedHelpers.setAdditionalInstanceField(item, "BiliFoldsTag", Boolean.TRUE);
         } catch (Throwable ignored) {
@@ -958,9 +980,6 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
 
     private static Object buildFoldTag(ClassLoader cl) {
         if (cl == null) return null;
-        if (FOLD_TAG_TEMPLATE != null && FOLD_TAG_CL == cl) {
-            return FOLD_TAG_TEMPLATE;
-        }
         try {
             Class<?> tagCls = XposedHelpers.findClassIfExists(
                     "com.bilibili.app.comment3.data.model.CommentItem$g",
@@ -975,25 +994,143 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                     cl
             );
             if (tagCls == null || displayCls == null || labelCls == null) return null;
-            Object display = XposedHelpers.newInstance(displayCls, false, 0L);
-            Object label = XposedHelpers.newInstance(
-                    labelCls,
-                    FOLD_TAG_TEXT,
-                    FOLD_TAG_TEXT_COLOR_DAY,
-                    FOLD_TAG_TEXT_COLOR_NIGHT,
-                    FOLD_TAG_BG_DAY,
-                    FOLD_TAG_BG_NIGHT,
-                    FOLD_TAG_JUMP,
-                    null,
-                    null
-            );
-            Object tag = XposedHelpers.newInstance(tagCls, display, null, label);
-            FOLD_TAG_TEMPLATE = tag;
-            FOLD_TAG_CL = cl;
-            return tag;
+            Object display = buildFoldTagDisplay(displayCls);
+            if (display == null) return null;
+            Object label = buildFoldTagLabel(labelCls);
+            if (label == null) return null;
+            return buildFoldTagObject(tagCls, display, label);
         } catch (Throwable ignored) {
             return null;
         }
+    }
+
+    private static Object buildFoldTagDisplay(Class<?> displayCls) {
+        Object display = tryNewInstance(displayCls, true, 0L);
+        if (display != null) return display;
+        display = tryNewInstance(displayCls, true);
+        if (display != null) return display;
+        display = tryNewInstance(displayCls, false, 0L);
+        if (display != null) return display;
+        return tryNewInstance(displayCls);
+    }
+
+    private static Object buildFoldTagLabel(Class<?> labelCls) {
+        Object label = tryNewInstance(
+                labelCls,
+                FOLD_TAG_TEXT,
+                FOLD_TAG_TEXT_COLOR_DAY,
+                FOLD_TAG_TEXT_COLOR_NIGHT,
+                FOLD_TAG_BG_DAY,
+                FOLD_TAG_BG_NIGHT,
+                FOLD_TAG_JUMP,
+                null,
+                null
+        );
+        if (label != null) return label;
+        label = tryNewInstance(
+                labelCls,
+                FOLD_TAG_TEXT,
+                FOLD_TAG_TEXT_COLOR_DAY,
+                FOLD_TAG_TEXT_COLOR_NIGHT,
+                FOLD_TAG_BG_DAY,
+                FOLD_TAG_BG_NIGHT,
+                FOLD_TAG_JUMP
+        );
+        if (label != null) return label;
+        String[] textValues = new String[] {
+                FOLD_TAG_TEXT,
+                FOLD_TAG_TEXT_COLOR_DAY,
+                FOLD_TAG_TEXT_COLOR_NIGHT,
+                FOLD_TAG_BG_DAY,
+                FOLD_TAG_BG_NIGHT,
+                FOLD_TAG_JUMP,
+                ""
+        };
+        java.lang.reflect.Constructor<?>[] ctors = labelCls.getDeclaredConstructors();
+        for (java.lang.reflect.Constructor<?> ctor : ctors) {
+            try {
+                Class<?>[] pts = ctor.getParameterTypes();
+                Object[] args = new Object[pts.length];
+                int sIdx = 0;
+                for (int i = 0; i < pts.length; i++) {
+                    Class<?> t = pts[i];
+                    if (t == String.class) {
+                        args[i] = sIdx < textValues.length ? textValues[sIdx++] : "";
+                    } else if (t == boolean.class || t == Boolean.class) {
+                        args[i] = false;
+                    } else if (t == int.class || t == Integer.class) {
+                        args[i] = 0;
+                    } else if (t == long.class || t == Long.class) {
+                        args[i] = 0L;
+                    } else if (t == float.class || t == Float.class) {
+                        args[i] = 0f;
+                    } else if (t == double.class || t == Double.class) {
+                        args[i] = 0d;
+                    } else {
+                        args[i] = null;
+                    }
+                }
+                ctor.setAccessible(true);
+                Object v = ctor.newInstance(args);
+                if (v != null) return v;
+            } catch (Throwable ignored) {
+            }
+        }
+        return null;
+    }
+
+    private static Object buildFoldTagObject(Class<?> tagCls, Object display, Object label) {
+        Object tag = tryNewInstance(tagCls, display, null, label);
+        if (tag != null) return tag;
+        tag = tryNewInstance(tagCls, display, label, null);
+        if (tag != null) return tag;
+        tag = tryNewInstance(tagCls, label, display, null);
+        if (tag != null) return tag;
+        tag = tryNewInstance(tagCls, display, label);
+        if (tag != null) return tag;
+        java.lang.reflect.Constructor<?>[] ctors = tagCls.getDeclaredConstructors();
+        for (java.lang.reflect.Constructor<?> ctor : ctors) {
+            try {
+                Class<?>[] pts = ctor.getParameterTypes();
+                Object[] args = new Object[pts.length];
+                boolean hasDisplay = false;
+                boolean hasLabel = false;
+                for (int i = 0; i < pts.length; i++) {
+                    Class<?> t = pts[i];
+                    if (!hasDisplay && display != null && t.isInstance(display)) {
+                        args[i] = display;
+                        hasDisplay = true;
+                        continue;
+                    }
+                    if (!hasLabel && label != null && t.isInstance(label)) {
+                        args[i] = label;
+                        hasLabel = true;
+                        continue;
+                    }
+                    if (t == boolean.class || t == Boolean.class) {
+                        args[i] = false;
+                    } else if (t == int.class || t == Integer.class) {
+                        args[i] = 0;
+                    } else if (t == long.class || t == Long.class) {
+                        args[i] = 0L;
+                    } else if (t == float.class || t == Float.class) {
+                        args[i] = 0f;
+                    } else if (t == double.class || t == Double.class) {
+                        args[i] = 0d;
+                    } else if (t == String.class) {
+                        args[i] = "";
+                    } else {
+                        args[i] = null;
+                    }
+                }
+                if (!hasDisplay || !hasLabel) continue;
+                ctor.setAccessible(true);
+                Object v = ctor.newInstance(args);
+                if (v != null) return v;
+            } catch (Throwable ignored) {
+            }
+        }
+        return null;
     }
 
     private static boolean isZipCard(Object item) {
@@ -1294,9 +1431,6 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             if (rootId <= 0) continue;
             ArrayList<Object> bucket = FOLD_CACHE.computeIfAbsent(rootId, k -> new ArrayList<>());
             long id = getId(o);
-            if (id != 0L && id == rootId) {
-                continue;
-            }
             boolean exists = false;
             if (id != 0L) {
                 for (Object e : bucket) {
