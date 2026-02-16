@@ -42,6 +42,8 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
     private static final ConcurrentHashMap<String, Long> KNOWN_FOLD_OFFSET = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<String, Long> OFFSET_TO_ROOT = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<String, Boolean> AUTO_FETCHING = new ConcurrentHashMap<>();
+    private static final ConcurrentHashMap<String, AtomicInteger> LOG_COUNT = new ConcurrentHashMap<>();
+    private static final int LOG_LIMIT = 80;
 
     private static final ConcurrentHashMap<String, AtomicInteger> FOOTER_RETRY_COUNT = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<String, Boolean> FOOTER_RETRY_PENDING = new ConcurrentHashMap<>();
@@ -108,6 +110,41 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                 @Override
                 protected Object replaceHookedMethod(MethodHookParam param) {
                     return false;
+                }
+            });
+        } catch (Throwable ignored) {
+        }
+        try {
+            XposedBridge.hookAllMethods(c, "getTags", new XC_MethodHook() {
+                @Override
+                protected void afterHookedMethod(MethodHookParam param) {
+                    Object item = param.thisObject;
+                    if (!shouldInjectFoldTag(item)) return;
+                    Object r = param.getResult();
+                    List<?> tags = r instanceof List ? (List<?>) r : null;
+                    if (containsFoldTag(tags)) {
+                        try {
+                            XposedHelpers.setAdditionalInstanceField(item, "BiliFoldsTag", Boolean.TRUE);
+                        } catch (Throwable ignored) {
+                        }
+                        return;
+                    }
+                    Object tag = buildFoldTag(item == null ? null : item.getClass().getClassLoader());
+                    if (tag == null) {
+                        logN("tag.inject.fail", "inject tag failed: buildTag null id=" + getId(item));
+                        return;
+                    }
+                    ArrayList<Object> out = new ArrayList<>((tags == null ? 0 : tags.size()) + 1);
+                    if (tags != null) {
+                        out.addAll((List<?>) tags);
+                    }
+                    out.add(tag);
+                    param.setResult(out);
+                    try {
+                        XposedHelpers.setAdditionalInstanceField(item, "BiliFoldsTag", Boolean.TRUE);
+                    } catch (Throwable ignored) {
+                    }
+                    logN("tag.inject.ok", "inject tag via getTags id=" + getId(item));
                 }
             });
         } catch (Throwable ignored) {
@@ -204,6 +241,11 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                 Object listObj = param.args[0];
                 if (!(listObj instanceof List)) return;
                 List<?> list = (List<?>) listObj;
+                if (!containsFooterCard(list) && hasZipCard(list)) {
+                    primeAutoFetchFromZipCards(list);
+                    logN("b1.defer.footer", "defer replace before footer size=" + list.size());
+                    return;
+                }
                 List<?> replaced = replaceZipCardsInList(list, "CommentListAdapter.b1");
                 if (replaced != null) {
                     param.args[0] = replaced;
@@ -320,9 +362,10 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         List<?> list = (List<?>) listObj;
         boolean hasFooter = containsFooterCard(list);
         if (!hasFooter) {
-            if (scheduleFooterRetry(offset)) {
-                return;
-            }
+            primeAutoFetchFromZipCards(list);
+            scheduleFooterRetry(offset);
+            logN("adapter.defer.footer", "defer cached replace before footer size=" + list.size());
+            return;
         } else {
             clearFooterRetry(offset);
         }
@@ -378,6 +421,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                 }
                 if (cached == null || cached.isEmpty()) {
                     tryAutoFetchFoldList(offset, getCurrentSubjectKey());
+                    logN("zip.cache.miss", "zip miss offset=" + offset + " tag=" + tag);
                     out.add(item);
                     continue;
                 }
@@ -406,8 +450,10 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                     } else {
                         changed = true;
                     }
+                    logN("zip.replace.zero", "zip replace zero inserted offset=" + offset + " useful=" + useful + " tag=" + tag);
                     continue;
                 }
+                logN("zip.replace.ok", "zip replace inserted=" + inserted + " offset=" + offset + " tag=" + tag);
                 changed = true;
                 continue;
             }
@@ -892,6 +938,10 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
     private static void markFoldedTag(Object item) {
         if (item == null || !isCommentItem(item)) return;
         try {
+            XposedHelpers.setAdditionalInstanceField(item, "BiliFoldsNeedTag", Boolean.TRUE);
+        } catch (Throwable ignored) {
+        }
+        try {
             Object existed = XposedHelpers.getAdditionalInstanceField(item, "BiliFoldsTag");
             if (existed != null) return;
         } catch (Throwable ignored) {
@@ -905,7 +955,10 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             return;
         }
         Object tag = buildFoldTag(item.getClass().getClassLoader());
-        if (tag == null) return;
+        if (tag == null) {
+            logN("tag.build.fail", "build tag failed id=" + getId(item));
+            return;
+        }
         ArrayList<Object> out = new ArrayList<>((tags == null ? 0 : tags.size()) + 1);
         if (tags != null) {
             out.addAll((List<?>) tags);
@@ -924,11 +977,15 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             } catch (Throwable ignored) {
             }
         }
-        if (!applied) return;
+        if (!applied) {
+            logN("tag.apply.fail", "apply tag failed id=" + getId(item));
+            return;
+        }
         try {
             XposedHelpers.setAdditionalInstanceField(item, "BiliFoldsTag", Boolean.TRUE);
         } catch (Throwable ignored) {
         }
+        logN("tag.apply.ok", "apply tag ok id=" + getId(item));
     }
 
     private static boolean containsFoldTag(List<?> tags) {
@@ -1704,8 +1761,10 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         final String finalOffset = offset;
         AtomicInteger cnt = FOOTER_RETRY_COUNT.computeIfAbsent(finalKey, k -> new AtomicInteger(0));
         int attempt = cnt.incrementAndGet();
+        logN("footer.retry", "footer retry key=" + finalKey + " attempt=" + attempt);
         if (attempt > FOOTER_RETRY_LIMIT) {
             FOOTER_RETRY_PENDING.remove(finalKey);
+            logN("footer.retry.stop", "footer retry limit reached key=" + finalKey);
             return false;
         }
         if (FOOTER_RETRY_PENDING.putIfAbsent(finalKey, Boolean.TRUE) != null) return true;
@@ -1734,8 +1793,44 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         return "global";
     }
 
+    private static boolean hasZipCard(List<?> list) {
+        if (list == null || list.isEmpty()) return false;
+        for (Object item : list) {
+            if (isZipCard(item)) return true;
+        }
+        return false;
+    }
+
+    private static void primeAutoFetchFromZipCards(List<?> list) {
+        if (list == null || list.isEmpty()) return;
+        String subjectKey = getCurrentSubjectKey();
+        for (Object item : list) {
+            if (!isZipCard(item)) continue;
+            String offset = getZipCardOffset(item);
+            if (offset == null || offset.isEmpty()) continue;
+            tryAutoFetchFoldList(offset, subjectKey);
+        }
+    }
+
+    private static boolean shouldInjectFoldTag(Object item) {
+        if (item == null || !isCommentItem(item)) return false;
+        try {
+            Object v = XposedHelpers.getAdditionalInstanceField(item, "BiliFoldsNeedTag");
+            return Boolean.TRUE.equals(v);
+        } catch (Throwable ignored) {
+            return false;
+        }
+    }
+
     private static void log(String msg) {
         XposedBridge.log(TAG + ": " + msg);
         Log.i(TAG, msg);
+    }
+
+    private static void logN(String key, String msg) {
+        AtomicInteger c = LOG_COUNT.computeIfAbsent(key, k -> new AtomicInteger(0));
+        if (c.incrementAndGet() <= LOG_LIMIT) {
+            log(msg);
+        }
     }
 }
