@@ -243,8 +243,12 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                 List<?> list = (List<?>) listObj;
                 if (!containsFooterCard(list) && hasZipCard(list)) {
                     primeAutoFetchFromZipCards(list);
-                    logN("b1.defer.footer", "defer replace before footer size=" + list.size());
-                    return;
+                    logR1Summary("b1.noFooter", list);
+                    if (scheduleFooterRetry(null)) {
+                        logN("b1.defer.footer", "defer replace before footer size=" + list.size());
+                        return;
+                    }
+                    logN("b1.defer.giveup", "footer retry limit reached, continue replace size=" + list.size());
                 }
                 List<?> replaced = replaceZipCardsInList(list, "CommentListAdapter.b1");
                 if (replaced != null) {
@@ -363,9 +367,12 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         boolean hasFooter = containsFooterCard(list);
         if (!hasFooter) {
             primeAutoFetchFromZipCards(list);
-            scheduleFooterRetry(offset);
-            logN("adapter.defer.footer", "defer cached replace before footer size=" + list.size());
-            return;
+            logR1Summary("adapter.noFooter", list);
+            if (scheduleFooterRetry(offset)) {
+                logN("adapter.defer.footer", "defer cached replace before footer size=" + list.size());
+                return;
+            }
+            logN("adapter.defer.giveup", "footer retry limit reached, continue cached replace size=" + list.size());
         } else {
             clearFooterRetry(offset);
         }
@@ -1726,9 +1733,21 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
     private static boolean isFooterCard(Object item) {
         if (item == null || !"vv.r1".equals(item.getClass().getName())) return false;
         String text = callStringMethod(item, "h");
-        if (text == null) return false;
-        String t = text.trim();
-        return t.contains("没有了") || t.contains("找也没有") || t.contains("再怎么找") || t.contains("到底了");
+        if (text != null) {
+            String t = text.trim();
+            if (t.contains("没有了") || t.contains("找也没有") || t.contains("再怎么找") || t.contains("到底了")) {
+                return true;
+            }
+            if (t.contains("没有啦") || t.contains("没有喽") || t.contains("没有咯") || t.contains("没有更多")) {
+                return true;
+            }
+        }
+        String offset = getZipCardOffset(item);
+        Boolean clickable = callBooleanMethod(item, "f");
+        if ((offset == null || offset.isEmpty()) && clickable != null && !clickable) {
+            return true;
+        }
+        return false;
     }
 
     private static void postToMain(Runnable r) {
@@ -1810,6 +1829,30 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             if (offset == null || offset.isEmpty()) continue;
             tryAutoFetchFoldList(offset, subjectKey);
         }
+    }
+
+    private static void logR1Summary(String tag, List<?> list) {
+        if (list == null || list.isEmpty()) return;
+        StringBuilder sb = new StringBuilder();
+        sb.append(tag).append(" r1=");
+        int totalR1 = 0;
+        int shown = 0;
+        for (Object item : list) {
+            if (item == null || !"vv.r1".equals(item.getClass().getName())) continue;
+            totalR1++;
+            if (shown < 4) {
+                String text = callStringMethod(item, "h");
+                String offset = getZipCardOffset(item);
+                Boolean clickable = callBooleanMethod(item, "f");
+                sb.append(" [text=").append(safeToString(text))
+                        .append(",offset=").append(safeToString(offset))
+                        .append(",click=").append(safeToString(clickable))
+                        .append("]");
+                shown++;
+            }
+        }
+        sb.append(" total=").append(totalR1).append(" size=").append(list.size());
+        logN("r1.summary." + tag, sb.toString());
     }
 
     private static boolean shouldInjectFoldTag(Object item) {
