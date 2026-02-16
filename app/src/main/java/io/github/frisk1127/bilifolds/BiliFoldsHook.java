@@ -321,13 +321,16 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         }
         if (!(listObj instanceof List)) return;
         List<?> list = (List<?>) listObj;
-        List<?> replaced = replaceZipCardsInList(list, "CommentListAdapter.cached");
-        if (replaced == null) return;
-        if (!containsFooterCard(list)) {
-            scheduleFooterRetry(offset);
+        boolean hasFooter = containsFooterCard(list);
+        if (!hasFooter) {
+            if (scheduleFooterRetry(offset)) {
+                return;
+            }
         } else {
             clearFooterRetry(offset);
         }
+        List<?> replaced = replaceZipCardsInList(list, "CommentListAdapter.cached");
+        if (replaced == null) return;
         postToMain(new Runnable() {
             @Override
             public void run() {
@@ -1364,7 +1367,6 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
     private static List<Object> reorderCommentsByTime(List<Object> list, Boolean desc) {
         if (list == null || list.size() < 2) return null;
         if (!shouldSortByTime()) return null;
-        if (desc == null && getSortModeValue(LAST_SORT_MODE) == Integer.MIN_VALUE) return null;
         ArrayList<Object> comments = new ArrayList<>();
         ArrayList<Long> originalIds = new ArrayList<>();
         for (Object item : list) {
@@ -1373,7 +1375,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             originalIds.add(getId(item));
         }
         if (comments.size() < 2) return null;
-        final boolean descOrder = desc == null || desc;
+        final boolean descOrder = false;
         Collections.sort(comments, new Comparator<Object>() {
             @Override
             public int compare(Object o1, Object o2) {
@@ -1563,9 +1565,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
     }
 
     private static boolean scheduleFooterRetry(String offset) {
-        String key = makeOffsetKey(offset, getCurrentSubjectKey());
-        if (key == null) key = offset;
-        if (key == null || key.isEmpty()) return false;
+        String key = buildFooterRetryKey(offset);
         final String finalKey = key;
         final String finalOffset = offset;
         AtomicInteger cnt = FOOTER_RETRY_COUNT.computeIfAbsent(finalKey, k -> new AtomicInteger(0));
@@ -1586,11 +1586,18 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
     }
 
     private static void clearFooterRetry(String offset) {
-        String key = makeOffsetKey(offset, getCurrentSubjectKey());
-        if (key == null) key = offset;
-        if (key == null || key.isEmpty()) return;
+        String key = buildFooterRetryKey(offset);
         FOOTER_RETRY_COUNT.remove(key);
         FOOTER_RETRY_PENDING.remove(key);
+    }
+
+    private static String buildFooterRetryKey(String offset) {
+        String key = makeOffsetKey(offset, getCurrentSubjectKey());
+        if (key != null && !key.isEmpty()) return key;
+        if (offset != null && !offset.isEmpty()) return "offset|" + offset;
+        String subject = getCurrentSubjectKey();
+        if (subject != null && !subject.isEmpty()) return "subject|" + subject;
+        return "global";
     }
 
     private static void log(String msg) {
