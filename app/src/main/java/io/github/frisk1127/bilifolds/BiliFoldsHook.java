@@ -115,40 +115,73 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         } catch (Throwable ignored) {
         }
         try {
-            XposedBridge.hookAllMethods(c, "getTags", new XC_MethodHook() {
-                @Override
-                protected void afterHookedMethod(MethodHookParam param) {
-                    Object item = param.thisObject;
-                    if (!shouldInjectFoldTag(item)) return;
-                    Object r = param.getResult();
-                    List<?> tags = r instanceof List ? (List<?>) r : null;
-                    if (containsFoldTag(tags)) {
-                        try {
-                            XposedHelpers.setAdditionalInstanceField(item, "BiliFoldsTag", Boolean.TRUE);
-                        } catch (Throwable ignored) {
-                        }
-                        return;
-                    }
-                    Object tag = buildFoldTag(item == null ? null : item.getClass().getClassLoader());
-                    if (tag == null) {
-                        logN("tag.inject.fail", "inject tag failed: buildTag null id=" + getId(item));
-                        return;
-                    }
-                    ArrayList<Object> out = new ArrayList<>((tags == null ? 0 : tags.size()) + 1);
-                    if (tags != null) {
-                        out.addAll((List<?>) tags);
-                    }
-                    out.add(tag);
-                    param.setResult(out);
-                    try {
-                        XposedHelpers.setAdditionalInstanceField(item, "BiliFoldsTag", Boolean.TRUE);
-                    } catch (Throwable ignored) {
-                    }
-                    logN("tag.inject.ok", "inject tag via getTags id=" + getId(item));
-                }
-            });
+            int hookCount = 0;
+            hookCount += hookCommentItemTagMethod(c, "getTags");
+            hookCount += hookCommentItemTagMethod(c, "V");
+            hookCount += hookCommentItemTagMethod(c, "v");
+            hookCount += hookCommentItemTagMethod(c, "W");
+            hookCount += hookCommentItemTagMethod(c, "w");
+            if (hookCount > 0) {
+                log("CommentItem tag hook count=" + hookCount);
+            } else {
+                log("CommentItem tag hook disabled");
+            }
         } catch (Throwable ignored) {
         }
+    }
+
+    private static int hookCommentItemTagMethod(Class<?> c, String methodName) {
+        if (c == null || methodName == null || methodName.isEmpty()) return 0;
+        int count = 0;
+        java.lang.reflect.Method[] methods = c.getDeclaredMethods();
+        for (java.lang.reflect.Method m : methods) {
+            if (!methodName.equals(m.getName())) continue;
+            Class<?>[] pts = m.getParameterTypes();
+            if (pts != null && pts.length != 0) continue;
+            Class<?> rt = m.getReturnType();
+            if (rt == null || !List.class.isAssignableFrom(rt)) continue;
+            try {
+                XposedBridge.hookMethod(m, new XC_MethodHook() {
+                    @Override
+                    protected void afterHookedMethod(MethodHookParam param) {
+                        injectFoldTagFromTagAccessor(param, methodName);
+                    }
+                });
+                count++;
+            } catch (Throwable ignored) {
+            }
+        }
+        return count;
+    }
+
+    private static void injectFoldTagFromTagAccessor(XC_MethodHook.MethodHookParam param, String source) {
+        Object item = param.thisObject;
+        if (!shouldInjectFoldTag(item)) return;
+        Object r = param.getResult();
+        List<?> tags = r instanceof List ? (List<?>) r : null;
+        if (containsFoldTag(tags)) {
+            try {
+                XposedHelpers.setAdditionalInstanceField(item, "BiliFoldsTag", Boolean.TRUE);
+            } catch (Throwable ignored) {
+            }
+            return;
+        }
+        Object tag = buildFoldTag(item == null ? null : item.getClass().getClassLoader());
+        if (tag == null) {
+            logN("tag.inject.fail", "inject tag failed: buildTag null id=" + getId(item) + " via=" + source);
+            return;
+        }
+        ArrayList<Object> out = new ArrayList<>((tags == null ? 0 : tags.size()) + 1);
+        if (tags != null) {
+            out.addAll((List<?>) tags);
+        }
+        out.add(tag);
+        param.setResult(out);
+        try {
+            XposedHelpers.setAdditionalInstanceField(item, "BiliFoldsTag", Boolean.TRUE);
+        } catch (Throwable ignored) {
+        }
+        logN("tag.inject.ok", "inject tag via " + source + " id=" + getId(item));
     }
 
     private static void hookZipDataSource(ClassLoader cl) {
@@ -241,15 +274,6 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                 Object listObj = param.args[0];
                 if (!(listObj instanceof List)) return;
                 List<?> list = (List<?>) listObj;
-                if (!containsFooterCard(list) && hasZipCard(list)) {
-                    primeAutoFetchFromZipCards(list);
-                    logR1Summary("b1.noFooter", list);
-                    if (scheduleFooterRetry(null)) {
-                        logN("b1.defer.footer", "defer replace before footer size=" + list.size());
-                        return;
-                    }
-                    logN("b1.defer.giveup", "footer retry limit reached, continue replace size=" + list.size());
-                }
                 List<?> replaced = replaceZipCardsInList(list, "CommentListAdapter.b1");
                 if (replaced != null) {
                     param.args[0] = replaced;
@@ -364,18 +388,6 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         }
         if (!(listObj instanceof List)) return;
         List<?> list = (List<?>) listObj;
-        boolean hasFooter = containsFooterCard(list);
-        if (!hasFooter) {
-            primeAutoFetchFromZipCards(list);
-            logR1Summary("adapter.noFooter", list);
-            if (scheduleFooterRetry(offset)) {
-                logN("adapter.defer.footer", "defer cached replace before footer size=" + list.size());
-                return;
-            }
-            logN("adapter.defer.giveup", "footer retry limit reached, continue cached replace size=" + list.size());
-        } else {
-            clearFooterRetry(offset);
-        }
         List<?> replaced = replaceZipCardsInList(list, "CommentListAdapter.cached");
         if (replaced == null) return;
         postToMain(new Runnable() {
@@ -402,13 +414,12 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         if (list == null || list.isEmpty()) return null;
         ArrayList<Object> out = new ArrayList<>(list.size());
         boolean changed = false;
-        Boolean desc = detectTimeOrderDesc(list);
         HashSet<Long> existingIds = collectCommentIds(list);
         for (int i = 0; i < list.size(); i++) {
             Object item = list.get(i);
             if (isZipCard(item)) {
                 String offset = getZipCardOffset(item);
-                List<Object> cached = getCachedFoldListForZip(item, offset, desc);
+                List<Object> cached = getCachedFoldListForZip(item, offset);
                 long rootCandidate = getZipCardRootId(item);
                 if (rootCandidate == 0L && offset != null) {
                     rootCandidate = getRootForOffset(offset);
@@ -420,9 +431,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                         ArrayList<Object> hinted = FOLD_CACHE.get(rootHint);
                         if (hinted != null && !hinted.isEmpty()) {
                             cached = new ArrayList<>(hinted);
-                            if (desc != null) {
-                                sortByCreateTime(cached, desc);
-                            }
+                            sortByCreateTime(cached, false);
                         }
                     }
                 }
@@ -467,12 +476,10 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             out.add(item);
         }
         if (!changed) return null;
-        List<Object> resorted = reorderCommentsByTime(out, desc);
-        if (resorted != null) return resorted;
         return out;
     }
 
-    private static List<Object> getCachedFoldListForZip(Object zipCard, String offset, Boolean desc) {
+    private static List<Object> getCachedFoldListForZip(Object zipCard, String offset) {
         ArrayList<Object> cached = null;
         cached = getCachedByOffset(offset, getCurrentSubjectKey());
         if ((cached == null || cached.isEmpty()) && offset != null) {
@@ -490,9 +497,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         }
         if (cached == null || cached.isEmpty()) return null;
         ArrayList<Object> out = new ArrayList<>(cached);
-        if (desc != null) {
-            sortByCreateTime(out, desc);
-        }
+        sortByCreateTime(out, false);
         return out;
     }
 
@@ -1199,15 +1204,23 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
 
     private static boolean isZipCard(Object item) {
         if (item == null || !"vv.r1".equals(item.getClass().getName())) return false;
+        if (isFooterCard(item)) {
+            logN("zip.skip.footer", "skip zip replace for footer-like r1");
+            return false;
+        }
         String text = callStringMethod(item, "h");
         if (text != null) {
             String t = text.trim();
-            if (t.contains("没有了") || t.contains("找也没有")) return false;
+            if (t.contains("没有了") || t.contains("找也没有") || t.contains("再怎么找") || t.contains("到底了")) {
+                return false;
+            }
             if (t.contains("折叠") || t.contains("展开")) return true;
             if (t.contains("更多评论") || t.contains("部分评论")) return true;
             return false;
         }
         String offset = getZipCardOffset(item);
+        Boolean clickable = callBooleanMethod(item, "f");
+        if (clickable != null && !clickable) return false;
         if (offset != null && !offset.isEmpty()) return true;
         return isKnownFoldOffset(offset);
     }
@@ -1752,10 +1765,13 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                 return true;
             }
         }
-        String offset = getZipCardOffset(item);
         Boolean clickable = callBooleanMethod(item, "f");
-        if ((offset == null || offset.isEmpty()) && clickable != null && !clickable) {
-            return true;
+        if (clickable != null && !clickable) {
+            if (text == null || text.trim().isEmpty()) return true;
+            String t = text.trim();
+            if (!t.contains("折叠") && !t.contains("展开") && !t.contains("更多评论") && !t.contains("部分评论")) {
+                return true;
+            }
         }
         return false;
     }
