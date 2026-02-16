@@ -1,9 +1,9 @@
-name: Android Build
+name: Release
 
 on:
+  workflow_dispatch:
   push:
   pull_request:
-  workflow_dispatch:
 
 permissions:
   actions: write
@@ -16,6 +16,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Make Gradle wrapper executable
         run: chmod +x gradlew
@@ -26,22 +28,25 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Install Android SDK packages
-        run: |
-          sdkmanager "platform-tools" "platforms;android-36" "build-tools;36.0.0"
-
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-home-cache-cleanup: true
+
+      - name: Prepare Gradle properties for CI
+        run: |
+          sed -i '/^org\.gradle\.java\.home=/d' gradle.properties
+          printf '\norg.gradle.parallel=true\n' >> gradle.properties
+          printf 'org.gradle.vfs.watch=true\n' >> gradle.properties
+          printf 'org.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8\n' >> gradle.properties
+          sed -i '/^org\.gradle\.configuration-cache=true$/d' gradle.properties
 
       - name: Build release APK
-        run: ./gradlew --no-daemon :app:assembleRelease
+        run: ./gradlew --no-daemon assembleRelease
 
       - name: Upload release APK
         uses: actions/upload-artifact@v4
         with:
-          name: app-release-apk
+          name: FuckBiliFolds-release
           path: app/build/outputs/apk/release/*.apk
           if-no-files-found: error
