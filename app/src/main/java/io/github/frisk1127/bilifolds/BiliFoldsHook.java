@@ -44,6 +44,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
     private static final ConcurrentHashMap<String, Boolean> AUTO_FETCHING = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<String, AtomicInteger> LOG_COUNT = new ConcurrentHashMap<>();
     private static final int LOG_LIMIT = 80;
+    private static final Set<String> TAG_ACCESSOR_METHODS = Collections.newSetFromMap(new ConcurrentHashMap<String, Boolean>());
 
     private static final ConcurrentHashMap<String, AtomicInteger> FOOTER_RETRY_COUNT = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<String, Boolean> FOOTER_RETRY_PENDING = new ConcurrentHashMap<>();
@@ -57,6 +58,10 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
     private static final ThreadLocal<Boolean> RESUBMITTING = new ThreadLocal<>();
     private static volatile android.os.Handler MAIN_HANDLER = null;
     private static volatile ClassLoader APP_CL = null;
+
+    static {
+        TAG_ACCESSOR_METHODS.add("getTags");
+    }
 
     @Override
     public void handleLoadPackage(XC_LoadPackage.LoadPackageParam lpparam) {
@@ -159,6 +164,17 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         if (!shouldInjectFoldTag(item)) return;
         Object r = param.getResult();
         List<?> tags = r instanceof List ? (List<?>) r : null;
+        boolean knownAccessor = TAG_ACCESSOR_METHODS.contains(source);
+        if (!knownAccessor) {
+            if (!isLikelyTagList(tags)) {
+                if (tags != null && !tags.isEmpty()) {
+                    logN("tag.inject.skip", "skip non-tag list source=" + source + " size=" + tags.size());
+                }
+                return;
+            }
+            TAG_ACCESSOR_METHODS.add(source);
+            logN("tag.inject.learn", "learn tag accessor source=" + source);
+        }
         if (containsFoldTag(tags)) {
             try {
                 XposedHelpers.setAdditionalInstanceField(item, "BiliFoldsTag", Boolean.TRUE);
@@ -182,6 +198,25 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         } catch (Throwable ignored) {
         }
         logN("tag.inject.ok", "inject tag via " + source + " id=" + getId(item));
+    }
+
+    private static boolean isLikelyTagList(List<?> list) {
+        if (list == null || list.isEmpty()) return false;
+        int checked = 0;
+        for (Object o : list) {
+            if (o == null) continue;
+            checked++;
+            String cn = o.getClass().getName();
+            if (cn != null && cn.contains("CommentItem$g")) {
+                return true;
+            }
+            String text = extractTagText(o);
+            if (text != null && !text.isEmpty()) {
+                return true;
+            }
+            if (checked >= 5) break;
+        }
+        return false;
     }
 
     private static void hookZipDataSource(ClassLoader cl) {
