@@ -1651,6 +1651,16 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         return null;
     }
 
+    private static Boolean callBooleanMethod(Object obj, String name) {
+        if (obj == null) return null;
+        try {
+            Object v = XposedHelpers.callMethod(obj, name);
+            if (v instanceof Boolean) return (Boolean) v;
+        } catch (Throwable ignored) {
+        }
+        return null;
+    }
+
     private static String safeToString(Object obj) {
         if (obj == null) return "";
         try {
