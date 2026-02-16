@@ -33,16 +33,13 @@ jobs:
         with:
           gradle-home-cache-cleanup: true
 
-      - name: Prepare Gradle properties for CI
-        run: |
-          sed -i '/^org\.gradle\.java\.home=/d' gradle.properties
-          printf '\norg.gradle.parallel=true\n' >> gradle.properties
-          printf 'org.gradle.vfs.watch=true\n' >> gradle.properties
-          printf 'org.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8\n' >> gradle.properties
-          sed -i '/^org\.gradle\.configuration-cache=true$/d' gradle.properties
-
       - name: Build release APK
-        run: ./gradlew --no-daemon assembleRelease
+        run: |
+          ./gradlew assembleRelease \
+            -Dorg.gradle.parallel=true \
+            -Dorg.gradle.vfs.watch=true \
+            -Dorg.gradle.jvmargs="-Xmx2048m -Dfile.encoding=UTF-8" \
+            -Dorg.gradle.configuration-cache=false
 
       - name: Upload release APK
         uses: actions/upload-artifact@v4
