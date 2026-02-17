@@ -523,6 +523,14 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                 changed = true;
                 continue;
             }
+            if (item != null && "vv.r1".equals(item.getClass().getName())) {
+                String text = callStringMethod(item, "h");
+                String offset = getZipCardOffset(item);
+                if ((text != null && (text.contains("折叠") || text.contains("展开"))) ||
+                        (offset != null && !offset.isEmpty())) {
+                    log("skip r1 non-zip text=" + text + " offset=" + offset + " tag=" + tag);
+                }
+            }
             out.add(item);
         }
         if (injectCachedByPendingOffsets(out, existingIds)) {
@@ -602,8 +610,18 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         if (list == null || list.isEmpty()) return;
         int max = Math.min(30, list.size());
         int found = 0;
+        int seenR1 = 0;
         for (int i = 0; i < max; i++) {
             Object item = list.get(i);
+            if (item != null && "vv.r1".equals(item.getClass().getName())) {
+                seenR1++;
+                String text = callStringMethod(item, "h");
+                String offset = getZipCardOffset(item);
+                if ((text != null && (text.contains("折叠") || text.contains("展开"))) ||
+                        (offset != null && !offset.isEmpty())) {
+                    log("prefetch r1 idx=" + i + " text=" + text + " offset=" + offset);
+                }
+            }
             if (!isZipCard(item)) continue;
             found++;
             String subjectKey = getCurrentSubjectKey();
@@ -620,6 +638,9 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         }
         if (found > 1) {
             log("prefetch fold cards total=" + found);
+        }
+        if (seenR1 > 1) {
+            log("prefetch r1 total=" + seenR1);
         }
     }
 
