@@ -502,6 +502,12 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                     out.add(o);
                     if (id != 0) existingIds.add(id);
                 }
+                if (offset != null && !offset.isEmpty()) {
+                    FOLD_CACHE_BY_OFFSET.remove(offset);
+                }
+                if (rootId > 0) {
+                    FOLD_CACHE.remove(rootId);
+                }
                 changed = true;
                 continue;
             }
@@ -540,6 +546,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             }
             if (inserted > 0) {
                 changed = true;
+                FOLD_CACHE_BY_OFFSET.remove(key);
                 OFFSET_INSERT_INDEX.remove(key);
             }
         }
@@ -920,6 +927,9 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
     private static void updateSubjectKey(Object subjectId) {
         String key = subjectKeyFromSubject(subjectId);
         if (key != null) {
+            if (LAST_SUBJECT_KEY == null || !key.equals(LAST_SUBJECT_KEY)) {
+                clearFoldCaches();
+            }
             LAST_SUBJECT_KEY = key;
         }
     }
@@ -928,8 +938,27 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         if (LAST_SUBJECT_KEY != null) return LAST_SUBJECT_KEY;
         Object subjectId = LAST_SUBJECT_ID == null ? null : LAST_SUBJECT_ID.get();
         String key = subjectKeyFromSubject(subjectId);
-        if (key != null) LAST_SUBJECT_KEY = key;
+        if (key != null) {
+            if (LAST_SUBJECT_KEY == null || !key.equals(LAST_SUBJECT_KEY)) {
+                clearFoldCaches();
+            }
+            LAST_SUBJECT_KEY = key;
+        }
         return key;
+    }
+
+    private static void clearFoldCaches() {
+        FOLD_CACHE.clear();
+        FOLD_CACHE_BY_OFFSET.clear();
+        OFFSET_TO_ROOT.clear();
+        OFFSET_INSERT_INDEX.clear();
+        AUTO_FETCHING.clear();
+        FOLDED_IDS.clear();
+        SUBJECT_HAS_FOLD.clear();
+        SUBJECT_EXPANDED.clear();
+        FOOTER_RETRY_COUNT.clear();
+        FOOTER_RETRY_PENDING.clear();
+        AUTO_EXPAND_ZIP.clear();
     }
 
     private static String deriveSubjectKeyFromList(List<?> list) {
