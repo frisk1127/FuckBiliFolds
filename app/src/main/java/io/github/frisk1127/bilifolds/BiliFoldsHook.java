@@ -44,6 +44,8 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
     private static final ConcurrentHashMap<String, Boolean> AUTO_FETCHING = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<Long, Boolean> FOLDED_IDS = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<String, Integer> OFFSET_INSERT_INDEX = new ConcurrentHashMap<>();
+    private static final ConcurrentHashMap<String, Boolean> SUBJECT_HAS_FOLD = new ConcurrentHashMap<>();
+    private static final ConcurrentHashMap<String, Boolean> SUBJECT_EXPANDED = new ConcurrentHashMap<>();
     private static final Set<Object> AUTO_EXPAND_ZIP = java.util.Collections.newSetFromMap(new java.util.WeakHashMap<Object, Boolean>());
 
     private static final String AUTO_EXPAND_TEXT = "已自动展开折叠评论";
@@ -199,6 +201,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                 List<?> list = (List<?>) listObj;
                 if (!containsFooterCard(list)) {
                     prefetchFoldList(list);
+                    return;
                 }
                 List<?> replaced = replaceZipCardsInList(list, "CommentListAdapter.b1");
                 if (replaced != null) {
@@ -444,10 +447,14 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         ArrayList<Object> out = new ArrayList<>(list.size());
         boolean changed = false;
         Boolean desc = Boolean.FALSE;
+        String subjectKey = getCurrentSubjectKey();
         HashSet<Long> existingIds = collectCommentIds(list);
         for (int i = 0; i < list.size(); i++) {
             Object item = list.get(i);
             if (isZipCard(item)) {
+                if (subjectKey != null) {
+                    SUBJECT_HAS_FOLD.put(subjectKey, Boolean.TRUE);
+                }
                 String offset = getZipCardOffset(item);
                 long rootId = getZipCardRootId(item);
                 if (rootId == 0L) {
@@ -488,6 +495,9 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             changed = true;
         }
         if (!changed) return null;
+        if (subjectKey != null) {
+            SUBJECT_EXPANDED.put(subjectKey, Boolean.TRUE);
+        }
         List<Object> resorted = reorderCommentsByTime(out);
         if (resorted != null) return resorted;
         return out;
@@ -520,6 +530,9 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                 OFFSET_INSERT_INDEX.remove(key);
             }
         }
+        if (changed) {
+            SUBJECT_EXPANDED.put(subjectKey, Boolean.TRUE);
+        }
         return changed;
     }
 
@@ -529,6 +542,10 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         for (int i = 0; i < max; i++) {
             Object item = list.get(i);
             if (!isZipCard(item)) continue;
+            String subjectKey = getCurrentSubjectKey();
+            if (subjectKey != null) {
+                SUBJECT_HAS_FOLD.put(subjectKey, Boolean.TRUE);
+            }
             String offset = getZipCardOffset(item);
             long rootId = getZipCardRootId(item);
             if (rootId == 0L) {
