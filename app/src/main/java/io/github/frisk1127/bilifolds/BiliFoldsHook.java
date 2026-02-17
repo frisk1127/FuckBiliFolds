@@ -494,11 +494,13 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                 }
                 List<Object> cached = getCachedFoldListForZip(item, offset, desc);
                 if (cached == null || cached.isEmpty()) {
+                    log("zip card cache miss offset=" + offset + " root=" + rootId + " tag=" + tag);
                     tryAutoFetchFoldList(offset, getCurrentSubjectKey(), rootId);
                     markAutoExpand(item);
                     out.add(item);
                     continue;
                 }
+                log("zip card cache hit offset=" + offset + " root=" + rootId + " size=" + cached.size() + " tag=" + tag);
                 markAutoExpand(item);
                 if (rootId > 0) {
                     ArrayList<Object> tips = tipsByRoot.computeIfAbsent(rootId, k -> new ArrayList<>());
@@ -599,9 +601,11 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
     private static void prefetchFoldList(List<?> list) {
         if (list == null || list.isEmpty()) return;
         int max = Math.min(30, list.size());
+        int found = 0;
         for (int i = 0; i < max; i++) {
             Object item = list.get(i);
             if (!isZipCard(item)) continue;
+            found++;
             String subjectKey = getCurrentSubjectKey();
             if (subjectKey != null) {
                 SUBJECT_HAS_FOLD.put(subjectKey, Boolean.TRUE);
@@ -611,7 +615,11 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             if (rootId == 0L) {
                 rootId = findPrevCommentRootId(list, i);
             }
+            log("prefetch fold card idx=" + i + " offset=" + offset + " root=" + rootId);
             tryAutoFetchFoldList(offset, getCurrentSubjectKey(), rootId);
+        }
+        if (found > 1) {
+            log("prefetch fold cards total=" + found);
         }
     }
 
