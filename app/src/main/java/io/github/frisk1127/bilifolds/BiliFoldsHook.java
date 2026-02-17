@@ -292,32 +292,23 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
     private static void applyFoldMarkToView(View root) {
         if (root == null) return;
         removeFoldMark(root);
-        TextView viewConv = findTextViewClickableContains(root, "查看对话");
+        ViewGroup actionRow = findActionRow(root);
+        if (actionRow == null) return;
+        TextView viewConv = findTextViewClickableContains(actionRow, "查看对话");
         if (viewConv != null) {
             stripFoldSuffix(viewConv);
-            View parent = (View) viewConv.getParent();
-            if (parent instanceof ViewGroup) {
-                ViewGroup group = (ViewGroup) parent;
-                if (!isLikelyActionRow(group)) return;
-                if (hasFoldMark(group)) return;
-                TextView mark = newFoldMark(group, viewConv);
-                int index = group.indexOfChild(viewConv);
-                if (index < 0) index = group.getChildCount();
-                group.addView(mark, Math.min(index + 1, group.getChildCount()));
-                return;
-            }
-            appendFoldToText(viewConv);
+            if (hasFoldMark(actionRow)) return;
+            TextView mark = newFoldMark(actionRow, viewConv);
+            int index = actionRow.indexOfChild(viewConv);
+            if (index < 0) index = actionRow.getChildCount();
+            actionRow.addView(mark, Math.min(index + 1, actionRow.getChildCount()));
             return;
         }
-        TextView reply = findTextViewExactClickable(root, "回复");
+        TextView reply = findTextViewExactClickable(actionRow, "回复");
         if (reply == null) return;
-        View parent = (View) reply.getParent();
-        if (!(parent instanceof ViewGroup)) return;
-        ViewGroup group = (ViewGroup) parent;
-        if (!isLikelyActionRow(group)) return;
-        if (hasFoldMark(group)) return;
-        TextView mark = newFoldMark(group, reply);
-        group.addView(mark, group.getChildCount());
+        if (hasFoldMark(actionRow)) return;
+        TextView mark = newFoldMark(actionRow, reply);
+        actionRow.addView(mark, actionRow.getChildCount());
     }
 
     private static void clearFoldMarkFromView(View root) {
@@ -368,12 +359,6 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             if (v == null) continue;
             Object tag = v.getTag();
             if (tag != null && "BiliFoldsMark".equals(tag)) return true;
-            if (v instanceof TextView) {
-                CharSequence t = ((TextView) v).getText();
-                if (t != null && (t.toString().contains(FOLD_MARK_TEXT) || t.toString().contains("折叠"))) {
-                    return true;
-                }
-            }
         }
         return false;
     }
@@ -440,20 +425,36 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         return null;
     }
 
-    private static boolean isLikelyActionRow(ViewGroup group) {
-        if (group instanceof android.widget.LinearLayout) {
-            android.widget.LinearLayout ll = (android.widget.LinearLayout) group;
-            if (ll.getOrientation() == android.widget.LinearLayout.HORIZONTAL) return true;
+    private static ViewGroup findActionRow(View root) {
+        if (root instanceof ViewGroup) {
+            ViewGroup group = (ViewGroup) root;
+            if (looksLikeActionRow(group)) return group;
+            for (int i = 0; i < group.getChildCount(); i++) {
+                View v = group.getChildAt(i);
+                ViewGroup hit = findActionRow(v);
+                if (hit != null) return hit;
+            }
         }
+        return null;
+    }
+
+    private static boolean looksLikeActionRow(ViewGroup group) {
+        int image = 0;
         int clickable = 0;
         for (int i = 0; i < group.getChildCount(); i++) {
             View v = group.getChildAt(i);
             if (v == null) continue;
+            if (v instanceof android.widget.ImageView) image++;
             if (v.isClickable()) clickable++;
         }
-        if (clickable >= 1 && group.getChildCount() <= 8) return true;
-        if (findTextViewExactClickable(group, "回复") != null) return true;
-        if (findTextViewClickableContains(group, "查看对话") != null) return true;
+        boolean hasConv = findTextViewClickableContains(group, "查看对话") != null;
+        boolean hasReply = findTextViewExactClickable(group, "回复") != null;
+        if ((hasConv || hasReply) && image >= 1) return true;
+        if (group.getChildCount() <= 10 && image >= 2 && clickable >= 2) return true;
+        if (group instanceof android.widget.LinearLayout) {
+            android.widget.LinearLayout ll = (android.widget.LinearLayout) group;
+            if (ll.getOrientation() == android.widget.LinearLayout.HORIZONTAL && image >= 1) return true;
+        }
         return false;
     }
 
