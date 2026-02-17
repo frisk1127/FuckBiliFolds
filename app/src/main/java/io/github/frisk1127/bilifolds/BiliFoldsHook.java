@@ -687,7 +687,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
 
     private static void prefetchFoldList(List<?> list) {
         if (list == null || list.isEmpty()) return;
-        int max = Math.min(200, list.size());
+        int max = list.size();
         int found = 0;
         int seenR1 = 0;
         log("prefetch list size=" + list.size() + " scanMax=" + max);
