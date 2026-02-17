@@ -585,14 +585,20 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             Object old = XposedHelpers.getAdditionalInstanceField(host, "BiliFoldsOverlayMark");
             if (old instanceof View) {
                 try {
-                    host.getOverlay().remove((View) old);
+                    android.view.ViewOverlay ov = host.getOverlay();
+                    if (ov instanceof android.view.ViewGroupOverlay) {
+                        ((android.view.ViewGroupOverlay) ov).remove((View) old);
+                    }
                 } catch (Throwable ignored) {
                 }
             }
         } catch (Throwable ignored) {
         }
         mark.setId(View.generateViewId());
-        host.getOverlay().add(mark);
+        android.view.ViewOverlay ov = host.getOverlay();
+        if (ov instanceof android.view.ViewGroupOverlay) {
+            ((android.view.ViewGroupOverlay) ov).add(mark);
+        }
         try {
             XposedHelpers.setAdditionalInstanceField(host, "BiliFoldsOverlayMark", mark);
         } catch (Throwable ignored) {
@@ -857,7 +863,10 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             Object overlayObj = XposedHelpers.getAdditionalInstanceField(root, "BiliFoldsOverlayMark");
             if (overlayObj instanceof View) {
                 try {
-                    root.getOverlay().remove((View) overlayObj);
+                    android.view.ViewOverlay ov = root.getOverlay();
+                    if (ov instanceof android.view.ViewGroupOverlay) {
+                        ((android.view.ViewGroupOverlay) ov).remove((View) overlayObj);
+                    }
                 } catch (Throwable ignored) {
                 }
                 try {
