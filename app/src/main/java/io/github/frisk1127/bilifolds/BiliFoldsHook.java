@@ -322,15 +322,15 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         TextView anchor = null;
         if (tvI != null && containsText(tvI, "查看对话")) {
             TextView mark = newFoldMark(markRoot, tvI);
-            if (addMarkAbsolute(markRoot, tvI, mark)) {
-                logMarkOnce(id, "mark abs viewConv(h0)");
+            if (addOverlayMark(markRoot, tvI, mark)) {
+                logMarkOnce(id, "mark overlay viewConv(h0)");
                 return true;
             }
             return false;
         } else if (tvH != null && containsText(tvH, "查看对话")) {
             TextView mark = newFoldMark(markRoot, tvH);
-            if (addMarkAbsolute(markRoot, tvH, mark)) {
-                logMarkOnce(id, "mark abs viewConv(h0)");
+            if (addOverlayMark(markRoot, tvH, mark)) {
+                logMarkOnce(id, "mark overlay viewConv(h0)");
                 return true;
             }
             return false;
@@ -355,8 +355,8 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         }
         if (hasFoldMark(markRoot)) return true;
         TextView mark = newFoldMark(markRoot, anchor);
-        if (addMarkAbsolute(markRoot, anchor, mark)) {
-            logMarkOnce(id, "mark abs anchor(h0)");
+        if (addOverlayMark(markRoot, anchor, mark)) {
+            logMarkOnce(id, "mark overlay anchor(h0)");
             return true;
         }
         return false;
@@ -374,8 +374,8 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         TextView viewConv = findTextViewContains(actionRow, "查看对话");
         if (viewConv != null) {
             TextView mark = newFoldMark(markRoot, viewConv);
-            if (addMarkAbsolute(markRoot, viewConv, mark)) {
-                logMarkOnce(id, "mark abs viewConv (fallback)");
+            if (addOverlayMark(markRoot, viewConv, mark)) {
+                logMarkOnce(id, "mark overlay viewConv (fallback)");
                 return true;
             }
             return true;
@@ -389,8 +389,8 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         if (hasFoldMark(markRoot)) return true;
         TextView base = (anchor instanceof TextView) ? (TextView) anchor : findFirstTextView(actionRow);
         TextView mark = newFoldMark(markRoot, base);
-        if (addMarkAbsolute(markRoot, anchor, mark)) {
-            logMarkOnce(id, "mark abs anchor (fallback)");
+        if (addOverlayMark(markRoot, anchor, mark)) {
+            logMarkOnce(id, "mark overlay anchor (fallback)");
             return true;
         }
         return false;
@@ -579,37 +579,38 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         return true;
     }
 
-    private static boolean addMarkAbsolute(final ViewGroup group, final View anchor, final TextView mark) {
-        if (group == null || anchor == null || mark == null) return false;
-        ViewGroup.LayoutParams lp;
-        if (group instanceof androidx.constraintlayout.widget.ConstraintLayout) {
-            lp = new androidx.constraintlayout.widget.ConstraintLayout.LayoutParams(
-                    ViewGroup.LayoutParams.WRAP_CONTENT,
-                    ViewGroup.LayoutParams.WRAP_CONTENT
-            );
-        } else {
-            lp = new ViewGroup.LayoutParams(
-                    ViewGroup.LayoutParams.WRAP_CONTENT,
-                    ViewGroup.LayoutParams.WRAP_CONTENT
-            );
+    private static boolean addOverlayMark(final ViewGroup host, final View anchor, final TextView mark) {
+        if (host == null || anchor == null || mark == null) return false;
+        try {
+            Object old = XposedHelpers.getAdditionalInstanceField(host, "BiliFoldsOverlayMark");
+            if (old instanceof View) {
+                try {
+                    host.getOverlay().remove((View) old);
+                } catch (Throwable ignored) {
+                }
+            }
+        } catch (Throwable ignored) {
         }
-        mark.setLayoutParams(lp);
         mark.setId(View.generateViewId());
-        group.addView(mark);
+        host.getOverlay().add(mark);
+        try {
+            XposedHelpers.setAdditionalInstanceField(host, "BiliFoldsOverlayMark", mark);
+        } catch (Throwable ignored) {
+        }
         mark.post(new Runnable() {
             @Override
             public void run() {
-                positionMarkAbsolute(group, anchor, mark);
+                positionOverlayMark(host, anchor, mark);
             }
         });
         return true;
     }
 
-    private static void positionMarkAbsolute(ViewGroup group, View anchor, TextView mark) {
-        if (group == null || anchor == null || mark == null) return;
-        int groupW = group.getWidth();
-        int groupH = group.getHeight();
-        if (groupW <= 0 || groupH <= 0) return;
+    private static void positionOverlayMark(ViewGroup host, View anchor, TextView mark) {
+        if (host == null || anchor == null || mark == null) return;
+        int hostW = host.getWidth();
+        int hostH = host.getHeight();
+        if (hostW <= 0 || hostH <= 0) return;
         int markW = mark.getWidth();
         int markH = mark.getHeight();
         if (markW <= 0 || markH <= 0) {
@@ -619,20 +620,20 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             markW = mark.getMeasuredWidth();
             markH = mark.getMeasuredHeight();
         }
-        int[] gp = new int[2];
+        int[] hp = new int[2];
         int[] ap = new int[2];
-        group.getLocationOnScreen(gp);
+        host.getLocationOnScreen(hp);
         anchor.getLocationOnScreen(ap);
-        float anchorX = ap[0] - gp[0];
-        float anchorY = ap[1] - gp[1];
-        float x = anchorX + anchor.getWidth() + dp(group.getContext(), 6);
-        if (x + markW > groupW) {
-            x = anchorX - markW - dp(group.getContext(), 6);
+        float anchorX = ap[0] - hp[0];
+        float anchorY = ap[1] - hp[1];
+        float x = anchorX + anchor.getWidth() + dp(host.getContext(), 6);
+        if (x + markW > hostW) {
+            x = anchorX - markW - dp(host.getContext(), 6);
         }
         if (x < 0) x = 0;
         float y = anchorY + (anchor.getHeight() - markH) / 2.0f;
         if (y < 0) y = 0;
-        if (y + markH > groupH) y = Math.max(0, groupH - markH);
+        if (y + markH > hostH) y = Math.max(0, hostH - markH);
         mark.setX(x);
         mark.setY(y);
     }
@@ -682,6 +683,11 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
     }
 
     private static boolean hasFoldMark(ViewGroup group) {
+        try {
+            Object overlay = XposedHelpers.getAdditionalInstanceField(group, "BiliFoldsOverlayMark");
+            if (overlay instanceof View) return true;
+        } catch (Throwable ignored) {
+        }
         for (int i = 0; i < group.getChildCount(); i++) {
             View v = group.getChildAt(i);
             if (v == null) continue;
@@ -829,6 +835,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
     }
 
     private static void removeFoldMark(View root) {
+        removeOverlayMark(root);
         if (root instanceof ViewGroup) {
             ViewGroup group = (ViewGroup) root;
             for (int i = group.getChildCount() - 1; i >= 0; i--) {
@@ -840,6 +847,30 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                     continue;
                 }
                 removeFoldMark(v);
+            }
+        }
+    }
+
+    private static void removeOverlayMark(View root) {
+        if (root == null) return;
+        try {
+            Object overlayObj = XposedHelpers.getAdditionalInstanceField(root, "BiliFoldsOverlayMark");
+            if (overlayObj instanceof View) {
+                try {
+                    root.getOverlay().remove((View) overlayObj);
+                } catch (Throwable ignored) {
+                }
+                try {
+                    XposedHelpers.removeAdditionalInstanceField(root, "BiliFoldsOverlayMark");
+                } catch (Throwable ignored) {
+                }
+            }
+        } catch (Throwable ignored) {
+        }
+        if (root instanceof ViewGroup) {
+            ViewGroup group = (ViewGroup) root;
+            for (int i = 0; i < group.getChildCount(); i++) {
+                removeOverlayMark(group.getChildAt(i));
             }
         }
     }
