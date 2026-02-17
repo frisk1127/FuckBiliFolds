@@ -318,11 +318,15 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         TextView tvC = getBindingTextView(binding, "c", "f400668c");
         TextView anchor = null;
         if (tvI != null && containsText(tvI, "查看对话")) {
-            anchor = tvI;
             stripFoldSuffix(tvI);
+            appendFoldToText(tvI);
+            logMarkOnce(id, "mark append viewConv(h0)");
+            return true;
         } else if (tvH != null && containsText(tvH, "查看对话")) {
-            anchor = tvH;
             stripFoldSuffix(tvH);
+            appendFoldToText(tvH);
+            logMarkOnce(id, "mark append viewConv(h0)");
+            return true;
         } else if (tvI != null && hasText(tvI)) {
             anchor = tvI;
         } else if (tvH != null && hasText(tvH)) {
