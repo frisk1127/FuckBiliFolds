@@ -504,36 +504,78 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
     }
 
     private static ViewGroup findActionRow(View root) {
-        if (root instanceof ViewGroup) {
-            ViewGroup group = (ViewGroup) root;
-            if (looksLikeActionRow(group)) return group;
-            for (int i = 0; i < group.getChildCount(); i++) {
-                View v = group.getChildAt(i);
-                ViewGroup hit = findActionRow(v);
-                if (hit != null) return hit;
-            }
-        }
-        return null;
+        BestActionRow best = new BestActionRow();
+        findActionRowRec(root, best);
+        return best.group;
     }
 
-    private static boolean looksLikeActionRow(ViewGroup group) {
+    private static void findActionRowRec(View root, BestActionRow best) {
+        if (!(root instanceof ViewGroup)) return;
+        ViewGroup group = (ViewGroup) root;
+        int score = scoreActionRow(group);
+        if (score > best.score) {
+            best.score = score;
+            best.group = group;
+        }
+        for (int i = 0; i < group.getChildCount(); i++) {
+            findActionRowRec(group.getChildAt(i), best);
+        }
+    }
+
+    private static int scoreActionRow(ViewGroup group) {
+        if (group == null) return Integer.MIN_VALUE;
+        String cls = group.getClass().getName();
+        if (cls != null) {
+            if (cls.contains("CommentIdentity") || cls.contains("Identity") || cls.contains("Avatar")) {
+                return Integer.MIN_VALUE;
+            }
+            if (cls.contains("Content") || cls.contains("Rich") || cls.contains("Text")) {
+                return Integer.MIN_VALUE / 2;
+            }
+        }
+        int score = 0;
         int image = 0;
         int clickable = 0;
-        for (int i = 0; i < group.getChildCount(); i++) {
+        int keyword = 0;
+        int childCount = group.getChildCount();
+        for (int i = 0; i < childCount; i++) {
             View v = group.getChildAt(i);
             if (v == null) continue;
             if (v instanceof android.widget.ImageView) image++;
             if (v.isClickable()) clickable++;
+            CharSequence desc = v.getContentDescription();
+            if (desc != null && containsAny(desc.toString(), new String[]{"赞", "踩", "回复", "评论", "分享", "更多", "对话", "查看"})) {
+                keyword += 2;
+            }
+            if (v instanceof TextView) {
+                CharSequence t = ((TextView) v).getText();
+                if (t != null && (t.toString().contains("查看对话") || "回复".equals(t.toString().trim()))) {
+                    keyword += 3;
+                }
+            }
         }
-        boolean hasConv = findTextViewClickableContains(group, "查看对话") != null;
-        boolean hasReply = findTextViewExactClickable(group, "回复") != null;
-        if ((hasConv || hasReply) && image >= 1) return true;
-        if (group.getChildCount() <= 10 && image >= 2 && clickable >= 2) return true;
         if (group instanceof android.widget.LinearLayout) {
             android.widget.LinearLayout ll = (android.widget.LinearLayout) group;
-            if (ll.getOrientation() == android.widget.LinearLayout.HORIZONTAL && image >= 1) return true;
+            if (ll.getOrientation() == android.widget.LinearLayout.HORIZONTAL) score += 2;
+        }
+        if (childCount >= 3 && childCount <= 12) score += 1;
+        score += image;
+        score += clickable;
+        if (keyword > 0) score += 4 + keyword;
+        return score;
+    }
+
+    private static boolean containsAny(String s, String[] keys) {
+        if (s == null || keys == null) return false;
+        for (String k : keys) {
+            if (k != null && s.contains(k)) return true;
         }
         return false;
+    }
+
+    private static final class BestActionRow {
+        int score = Integer.MIN_VALUE;
+        ViewGroup group = null;
     }
 
     private static void removeFoldMark(View root) {
