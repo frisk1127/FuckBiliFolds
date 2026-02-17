@@ -1,6 +1,9 @@
 package io.github.frisk1127.bilifolds;
 
 import android.util.Log;
+import android.view.View;
+import android.view.ViewGroup;
+import android.widget.TextView;
 import java.lang.ref.WeakReference;
 import java.lang.reflect.Field;
 import java.util.ArrayList;
@@ -217,6 +220,182 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                 }
             }
         });
+        hookCommentViewHolderBind(c, cl);
+    }
+
+    private static void hookCommentViewHolderBind(Class<?> adapterCls, ClassLoader cl) {
+        Class<?> vhCls = XposedHelpers.findClassIfExists(
+                "androidx.recyclerview.widget.RecyclerView$ViewHolder",
+                cl
+        );
+        if (vhCls == null) return;
+        java.lang.reflect.Method[] methods = adapterCls.getDeclaredMethods();
+        for (java.lang.reflect.Method m : methods) {
+            Class<?>[] pts = m.getParameterTypes();
+            if (pts == null || pts.length < 2) continue;
+            if (!vhCls.isAssignableFrom(pts[0])) continue;
+            if (pts[1] != int.class && pts[1] != Integer.class) continue;
+            XposedBridge.hookMethod(m, new XC_MethodHook() {
+                @Override
+                protected void afterHookedMethod(MethodHookParam param) {
+                    try {
+                        Object holder = param.args[0];
+                        int pos = (param.args[1] instanceof Integer) ? (Integer) param.args[1] : -1;
+                        if (holder == null || pos < 0) return;
+                        Object itemViewObj = XposedHelpers.getObjectField(holder, "itemView");
+                        if (!(itemViewObj instanceof View)) return;
+                        Object item = getAdapterItemAt(adapterCls, pos);
+                        if (!isCommentItem(item)) {
+                            clearFoldMarkFromView((View) itemViewObj);
+                            return;
+                        }
+                        long id = getId(item);
+                        if (id == 0) {
+                            clearFoldMarkFromView((View) itemViewObj);
+                            return;
+                        }
+                        if (!Boolean.TRUE.equals(FOLDED_IDS.get(id))) {
+                            clearFoldMarkFromView((View) itemViewObj);
+                            return;
+                        }
+                        applyFoldMarkToView((View) itemViewObj);
+                    } catch (Throwable ignored) {
+                    }
+                }
+            });
+        }
+    }
+
+    private static Object getAdapterItemAt(Class<?> adapterCls, int pos) {
+        Object adapter = LAST_COMMENT_ADAPTER == null ? null : LAST_COMMENT_ADAPTER.get();
+        if (adapter == null) return null;
+        Object differ;
+        try {
+            differ = XposedHelpers.getObjectField(adapter, "c");
+        } catch (Throwable ignored) {
+            return null;
+        }
+        if (differ == null) return null;
+        Object listObj;
+        try {
+            listObj = XposedHelpers.callMethod(differ, "a");
+        } catch (Throwable ignored) {
+            return null;
+        }
+        if (!(listObj instanceof List)) return null;
+        List<?> list = (List<?>) listObj;
+        if (pos < 0 || pos >= list.size()) return null;
+        return list.get(pos);
+    }
+
+    private static void applyFoldMarkToView(View root) {
+        if (root == null) return;
+        TextView viewConv = findTextViewContains(root, "查看对话");
+        if (viewConv != null) {
+            View parent = (View) viewConv.getParent();
+            if (parent instanceof ViewGroup) {
+                ViewGroup group = (ViewGroup) parent;
+                if (hasFoldMark(group)) return;
+                TextView mark = newFoldMark(group, viewConv);
+                int index = group.indexOfChild(viewConv);
+                if (index < 0) index = group.getChildCount();
+                group.addView(mark, Math.min(index + 1, group.getChildCount()));
+                return;
+            }
+            appendFoldToText(viewConv);
+            return;
+        }
+        TextView reply = findTextViewContains(root, "回复");
+        if (reply == null) return;
+        View parent = (View) reply.getParent();
+        if (!(parent instanceof ViewGroup)) return;
+        ViewGroup group = (ViewGroup) parent;
+        if (hasFoldMark(group)) return;
+        TextView mark = newFoldMark(group, reply);
+        group.addView(mark, group.getChildCount());
+    }
+
+    private static void clearFoldMarkFromView(View root) {
+        if (root == null) return;
+        removeFoldMark(root);
+        TextView viewConv = findTextViewContains(root, "查看对话");
+        if (viewConv == null) return;
+        CharSequence cur = viewConv.getText();
+        if (cur == null) return;
+        String s = cur.toString();
+        if (!s.contains("折叠")) return;
+        String cleaned = s.replace(" · 折叠", "").replace("折叠", "");
+        viewConv.setText(cleaned.trim());
+    }
+
+    private static TextView newFoldMark(ViewGroup group, TextView base) {
+        TextView mark = new TextView(group.getContext());
+        mark.setText("折叠");
+        if (base != null) {
+            mark.setTextColor(base.getCurrentTextColor());
+            mark.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX, base.getTextSize());
+        }
+        mark.setTag("BiliFoldsMark");
+        mark.setClickable(false);
+        mark.setFocusable(false);
+        return mark;
+    }
+
+    private static void appendFoldToText(TextView tv) {
+        if (tv == null) return;
+        CharSequence cur = tv.getText();
+        String s = cur == null ? "" : cur.toString();
+        if (!s.contains("折叠")) {
+            tv.setText(s + " · 折叠");
+        }
+    }
+
+    private static boolean hasFoldMark(ViewGroup group) {
+        for (int i = 0; i < group.getChildCount(); i++) {
+            View v = group.getChildAt(i);
+            if (v == null) continue;
+            Object tag = v.getTag();
+            if (tag != null && "BiliFoldsMark".equals(tag)) return true;
+            if (v instanceof TextView) {
+                CharSequence t = ((TextView) v).getText();
+                if (t != null && t.toString().contains("折叠")) return true;
+            }
+        }
+        return false;
+    }
+
+    private static TextView findTextViewContains(View root, String text) {
+        if (root instanceof TextView) {
+            CharSequence t = ((TextView) root).getText();
+            if (t != null && t.toString().contains(text)) {
+                return (TextView) root;
+            }
+        }
+        if (root instanceof ViewGroup) {
+            ViewGroup group = (ViewGroup) root;
+            for (int i = 0; i < group.getChildCount(); i++) {
+                View v = group.getChildAt(i);
+                TextView tv = findTextViewContains(v, text);
+                if (tv != null) return tv;
+            }
+        }
+        return null;
+    }
+
+    private static void removeFoldMark(View root) {
+        if (root instanceof ViewGroup) {
+            ViewGroup group = (ViewGroup) root;
+            for (int i = group.getChildCount() - 1; i >= 0; i--) {
+                View v = group.getChildAt(i);
+                if (v == null) continue;
+                Object tag = v.getTag();
+                if (tag != null && "BiliFoldsMark".equals(tag)) {
+                    group.removeViewAt(i);
+                    continue;
+                }
+                removeFoldMark(v);
+            }
+        }
     }
 
     private static boolean callCommentAdapterB1(Object adapter, List<?> list) {
