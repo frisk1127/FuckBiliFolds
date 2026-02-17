@@ -294,8 +294,8 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         if (realOffset == null) {
             return;
         }
-        String key = makeOffsetKey(realOffset, getCurrentSubjectKey());
-        if (key == null) {
+        String key = realOffset;
+        if (key == null || key.isEmpty()) {
             return;
         }
         ArrayList<Object> existing = FOLD_CACHE_BY_OFFSET.computeIfAbsent(key, k -> new ArrayList<>());
@@ -479,8 +479,8 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                 if (offset != null && !offset.isEmpty() && rootId > 0) {
                     OFFSET_TO_ROOT.put(offset, rootId);
                 }
-                String key = makeOffsetKey(offset, subjectKey);
-                if (key != null) {
+                String key = offset;
+                if (key != null && !key.isEmpty()) {
                     OFFSET_INSERT_INDEX.put(key, i);
                 }
                 List<Object> cached = getCachedFoldListForZip(item, offset, desc);
@@ -521,17 +521,10 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
 
     private static boolean injectCachedByPendingOffsets(ArrayList<Object> out, HashSet<Long> existingIds) {
         if (out == null) return false;
-        String subjectKey = getCurrentSubjectKey();
-        String prefix = subjectKey == null || subjectKey.isEmpty() ? null : subjectKey + "|";
         boolean changed = false;
         for (Map.Entry<String, Integer> entry : new ArrayList<>(OFFSET_INSERT_INDEX.entrySet())) {
             String key = entry.getKey();
-            if (key == null) continue;
-            if (prefix != null) {
-                if (!key.startsWith(prefix) && key.contains("|")) continue;
-            } else {
-                if (key.contains("|")) continue;
-            }
+            if (key == null || key.isEmpty()) continue;
             ArrayList<Object> cached = FOLD_CACHE_BY_OFFSET.get(key);
             if (cached == null || cached.isEmpty()) continue;
             int idx = entry.getValue() == null ? out.size() : entry.getValue();
@@ -551,7 +544,13 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             }
         }
         if (changed) {
-            SUBJECT_EXPANDED.put(subjectKey, Boolean.TRUE);
+            String subjectKey = getCurrentSubjectKey();
+            if (subjectKey == null) {
+                subjectKey = deriveSubjectKeyFromList(out);
+            }
+            if (subjectKey != null) {
+                SUBJECT_EXPANDED.put(subjectKey, Boolean.TRUE);
+            }
         }
         return changed;
     }
@@ -578,12 +577,9 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
 
     private static List<Object> getCachedFoldListForZip(Object zipCard, String offset, Boolean desc) {
         ArrayList<Object> cached = null;
-        String subjectKey = getCurrentSubjectKey();
-        if (subjectKey == null) {
-            subjectKey = deriveSubjectKeyFromListFromCache();
+        if (offset != null && !offset.isEmpty()) {
+            cached = FOLD_CACHE_BY_OFFSET.get(offset);
         }
-        String key = resolveOffsetKey(offset, subjectKey);
-        cached = key == null ? null : FOLD_CACHE_BY_OFFSET.get(key);
         if (cached == null || cached.isEmpty()) {
             long rootId = getZipCardRootId(zipCard);
             if (rootId > 0) {
@@ -614,7 +610,9 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
     private static void tryAutoFetchFoldList(String offset, String subjectKey, long rootId) {
         if (offset == null || offset.isEmpty()) return;
         String key = makeOffsetKey(offset, subjectKey);
-        if (key != null && FOLD_CACHE_BY_OFFSET.containsKey(key)) return;
+        if (FOLD_CACHE_BY_OFFSET.containsKey(offset) || (key != null && FOLD_CACHE_BY_OFFSET.containsKey(key))) {
+            return;
+        }
         String fetchKey = key == null ? offset : key;
         if (AUTO_FETCHING.putIfAbsent(fetchKey, Boolean.TRUE) != null) return;
         final Object subjectId = LAST_SUBJECT_ID == null ? null : LAST_SUBJECT_ID.get();
