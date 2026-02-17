@@ -496,6 +496,8 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                     out.add(item);
                     continue;
                 }
+                markAutoExpand(item);
+                out.add(item);
                 for (Object o : cached) {
                     long id = getId(o);
                     if (id != 0 && existingIds.contains(id)) {
