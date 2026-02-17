@@ -188,6 +188,10 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                 Object listObj = param.args[0];
                 if (!(listObj instanceof List)) return;
                 List<?> list = (List<?>) listObj;
+                if (!containsFooterCard(list)) {
+                    prefetchFoldList(list);
+                    return;
+                }
                 List<?> replaced = replaceZipCardsInList(list, "CommentListAdapter.b1");
                 if (replaced != null) {
                     param.args[0] = replaced;
@@ -365,13 +369,16 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         if (list == null || list.isEmpty()) return null;
         ArrayList<Object> out = new ArrayList<>(list.size());
         boolean changed = false;
-        Boolean desc = detectTimeOrderDesc(list);
+        Boolean desc = Boolean.FALSE;
         HashSet<Long> existingIds = collectCommentIds(list);
         for (int i = 0; i < list.size(); i++) {
             Object item = list.get(i);
             if (isZipCard(item)) {
                 String offset = getZipCardOffset(item);
                 long rootId = getZipCardRootId(item);
+                if (rootId == 0L) {
+                    rootId = findPrevCommentRootId(list, i);
+                }
                 if (offset != null && !offset.isEmpty() && rootId > 0) {
                     OFFSET_TO_ROOT.put(offset, rootId);
                 }
@@ -404,6 +411,22 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         return out;
     }
 
+    private static void prefetchFoldList(List<?> list) {
+        if (list == null || list.isEmpty()) return;
+        int max = Math.min(30, list.size());
+        for (int i = 0; i < max; i++) {
+            Object item = list.get(i);
+            if (!isZipCard(item)) continue;
+            String offset = getZipCardOffset(item);
+            long rootId = getZipCardRootId(item);
+            if (rootId == 0L) {
+                rootId = findPrevCommentRootId(list, i);
+            }
+            tryAutoFetchFoldList(offset, getCurrentSubjectKey(), rootId);
+            return;
+        }
+    }
+
     private static List<Object> getCachedFoldListForZip(Object zipCard, String offset, Boolean desc) {
         ArrayList<Object> cached = null;
         String key = makeOffsetKey(offset, getCurrentSubjectKey());
@@ -420,6 +443,19 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             sortByCreateTime(cached, desc);
         }
         return cached;
+    }
+
+    private static long findPrevCommentRootId(List<?> list, int index) {
+        if (list == null) return 0L;
+        for (int i = index - 1; i >= 0 && index - i <= 6; i--) {
+            Object item = list.get(i);
+            if (!isCommentItem(item)) continue;
+            long id = getId(item);
+            if (id != 0) return id;
+            long root = getRootId(item);
+            if (root != 0) return root;
+        }
+        return 0L;
     }
 
     private static void tryAutoFetchFoldList(String offset, String subjectKey, long rootId) {
