@@ -302,52 +302,49 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         try {
             Object binding = XposedHelpers.callMethod(holder, "x1");
             if (binding == null) return false;
-            Object rootObj;
-            try {
-                rootObj = XposedHelpers.callMethod(binding, "getRoot");
-            } catch (Throwable ignored) {
-                rootObj = XposedHelpers.getObjectField(binding, "f400666a");
-            }
-            if (!(rootObj instanceof View)) return false;
-            return applyFoldMarkToActionRow((View) rootObj, id);
+            return applyFoldMarkToCommentActionBar(binding, id);
         } catch (Throwable ignored) {
         }
         return false;
     }
 
-    private static boolean applyFoldMarkToActionRow(View root, long id) {
-        if (root == null) return false;
-        removeFoldMark(root);
-        TextView viewConv = findTextViewContains(root, "查看对话");
-        if (viewConv != null) {
-            stripFoldSuffix(viewConv);
-            View parent = (View) viewConv.getParent();
-            if (parent instanceof ViewGroup) {
-                ViewGroup group = (ViewGroup) parent;
-                if (hasFoldMark(group)) return true;
-                TextView mark = newFoldMark(group, viewConv);
-                if (addMarkAfterAnchor(group, viewConv, mark)) {
-                    logMarkOnce(id, "mark after viewConv");
-                    return true;
-                }
-            }
+    private static boolean applyFoldMarkToCommentActionBar(Object binding, long id) {
+        View root = getBindingRoot(binding);
+        if (!(root instanceof ViewGroup)) return false;
+        ViewGroup actionRow = (ViewGroup) root;
+        removeFoldMark(actionRow);
+        TextView tvI = getBindingTextView(binding, "i", "f400674i");
+        TextView tvH = getBindingTextView(binding, "h", "f400673h");
+        TextView tvC = getBindingTextView(binding, "c", "f400668c");
+        TextView anchor = null;
+        if (tvI != null && containsText(tvI, "查看对话")) {
+            anchor = tvI;
+            stripFoldSuffix(tvI);
+        } else if (tvH != null && containsText(tvH, "查看对话")) {
+            anchor = tvH;
+            stripFoldSuffix(tvH);
+        } else if (tvI != null && hasText(tvI)) {
+            anchor = tvI;
+        } else if (tvH != null && hasText(tvH)) {
+            anchor = tvH;
+        } else if (tvC != null && hasText(tvC)) {
+            anchor = tvC;
+        } else if (tvI != null) {
+            anchor = tvI;
+        } else if (tvH != null) {
+            anchor = tvH;
+        } else if (tvC != null) {
+            anchor = tvC;
         }
-        ViewGroup actionRow = (root instanceof ViewGroup) ? (ViewGroup) root : null;
-        if (actionRow == null) {
-            logMarkOnce(id, "mark skip: no action row");
-            return false;
-        }
-        View anchor = findActionAnchor(actionRow);
         if (anchor == null) {
-            logMarkOnce(id, "mark skip: no anchor");
+            logMarkOnce(id, "mark skip: no anchor (h0)");
             logActionRowOnce(id, actionRow);
             return false;
         }
         if (hasFoldMark(actionRow)) return true;
-        TextView base = (anchor instanceof TextView) ? (TextView) anchor : findFirstTextView(actionRow);
-        TextView mark = newFoldMark(actionRow, base);
+        TextView mark = newFoldMark(actionRow, anchor);
         if (addMarkAfterAnchor(actionRow, anchor, mark)) {
-            logMarkOnce(id, "mark after anchor");
+            logMarkOnce(id, "mark after h0 anchor");
             return true;
         }
         return false;
@@ -468,6 +465,46 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         View byDesc = findViewByDescContains(actionRow, new String[]{"回复", "评论", "对话", "查看"});
         if (byDesc != null) return byDesc;
         return null;
+    }
+
+    private static View getBindingRoot(Object binding) {
+        if (binding == null) return null;
+        try {
+            Object rootObj = XposedHelpers.callMethod(binding, "getRoot");
+            if (rootObj instanceof View) return (View) rootObj;
+        } catch (Throwable ignored) {
+        }
+        try {
+            Object rootObj = XposedHelpers.getObjectField(binding, "a");
+            if (rootObj instanceof View) return (View) rootObj;
+        } catch (Throwable ignored) {
+        }
+        return null;
+    }
+
+    private static TextView getBindingTextView(Object binding, String... names) {
+        if (binding == null || names == null) return null;
+        for (String name : names) {
+            if (name == null) continue;
+            try {
+                Object v = XposedHelpers.getObjectField(binding, name);
+                if (v instanceof TextView) return (TextView) v;
+            } catch (Throwable ignored) {
+            }
+        }
+        return null;
+    }
+
+    private static boolean containsText(TextView tv, String text) {
+        if (tv == null || text == null) return false;
+        CharSequence t = tv.getText();
+        return t != null && t.toString().contains(text);
+    }
+
+    private static boolean hasText(TextView tv) {
+        if (tv == null) return false;
+        CharSequence t = tv.getText();
+        return t != null && t.toString().trim().length() > 0;
     }
 
     private static boolean addMarkAfterAnchor(ViewGroup group, View anchor, TextView mark) {
