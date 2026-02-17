@@ -320,13 +320,19 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         TextView tvC = getBindingTextView(binding, "c", "f400668c");
         TextView anchor = null;
         if (tvI != null && containsText(tvI, "查看对话")) {
-            ensureViewConvMark(tvI, id);
-            logMarkOnce(id, "mark append viewConv(h0)");
-            return true;
+            TextView mark = newFoldMark(actionRow, tvI);
+            if (addMarkBeforeAnchor(actionRow, tvI, mark)) {
+                logMarkOnce(id, "mark before viewConv(h0)");
+                return true;
+            }
+            return false;
         } else if (tvH != null && containsText(tvH, "查看对话")) {
-            ensureViewConvMark(tvH, id);
-            logMarkOnce(id, "mark append viewConv(h0)");
-            return true;
+            TextView mark = newFoldMark(actionRow, tvH);
+            if (addMarkBeforeAnchor(actionRow, tvH, mark)) {
+                logMarkOnce(id, "mark before viewConv(h0)");
+                return true;
+            }
+            return false;
         } else if (tvI != null && hasText(tvI)) {
             anchor = tvI;
         } else if (tvH != null && hasText(tvH)) {
@@ -363,9 +369,12 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         }
         TextView viewConv = findTextViewContains(actionRow, "查看对话");
         if (viewConv != null) {
-            ensureViewConvMark(viewConv, id);
-            logMarkOnce(id, "mark append viewConv (fallback)");
-            return true;
+            TextView mark = newFoldMark(actionRow, viewConv);
+            if (addMarkBeforeAnchor(actionRow, viewConv, mark)) {
+                logMarkOnce(id, "mark before viewConv (fallback)");
+                return true;
+            }
+            return false;
         }
         View anchor = findActionAnchor(actionRow);
         if (anchor == null) {
@@ -429,27 +438,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
     private static void ensureViewConvMark(final TextView viewConv, final long id) {
         if (viewConv == null || id == 0L) return;
         VIEWCONV_ID.put(viewConv, id);
-        appendFoldAfterStrip(viewConv, id);
-        viewConv.post(new Runnable() {
-            @Override
-            public void run() {
-                appendFoldAfterStrip(viewConv, id);
-            }
-        });
         if (VIEWCONV_LISTENER.add(viewConv)) {
-            viewConv.addOnLayoutChangeListener(new View.OnLayoutChangeListener() {
-                @Override
-                public void onLayoutChange(View v, int left, int top, int right, int bottom,
-                                           int oldLeft, int oldTop, int oldRight, int oldBottom) {
-                    Long curId = VIEWCONV_ID.get(viewConv);
-                    if (curId == null) return;
-                    if (Boolean.TRUE.equals(FOLDED_IDS.get(curId))) {
-                        appendFoldAfterStrip(viewConv, curId);
-                    } else {
-                        stripFoldSuffix(viewConv);
-                    }
-                }
-            });
             viewConv.addOnAttachStateChangeListener(new View.OnAttachStateChangeListener() {
                 @Override
                 public void onViewDetachedFromWindow(View v) {
@@ -462,13 +451,6 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                 }
             });
         }
-    }
-
-    private static void appendFoldAfterStrip(TextView tv, long id) {
-        if (tv == null) return;
-        if (!Boolean.TRUE.equals(FOLDED_IDS.get(id))) return;
-        stripFoldSuffix(tv);
-        appendFoldToText(tv);
     }
 
     private static void logMarkOnce(long id, String msg) {
@@ -577,6 +559,35 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         int index = group.indexOfChild(anchor);
         if (index < 0) index = group.getChildCount();
         group.addView(mark, Math.min(index + 1, group.getChildCount()));
+        return true;
+    }
+
+    private static boolean addMarkBeforeAnchor(ViewGroup group, View anchor, TextView mark) {
+        if (group == null || anchor == null || mark == null) return false;
+        if (group instanceof androidx.constraintlayout.widget.ConstraintLayout) {
+            if (anchor.getId() == View.NO_ID) {
+                anchor.setId(View.generateViewId());
+            }
+            androidx.constraintlayout.widget.ConstraintLayout.LayoutParams lp =
+                    new androidx.constraintlayout.widget.ConstraintLayout.LayoutParams(
+                            ViewGroup.LayoutParams.WRAP_CONTENT,
+                            ViewGroup.LayoutParams.WRAP_CONTENT
+                    );
+            lp.endToStart = anchor.getId();
+            lp.topToTop = anchor.getId();
+            lp.bottomToBottom = anchor.getId();
+            if (anchor instanceof TextView) {
+                lp.baselineToBaseline = anchor.getId();
+            }
+            lp.setMarginEnd(dp(group.getContext(), 6));
+            mark.setLayoutParams(lp);
+            mark.setId(View.generateViewId());
+            group.addView(mark);
+            return true;
+        }
+        int index = group.indexOfChild(anchor);
+        if (index < 0) index = 0;
+        group.addView(mark, Math.max(0, index));
         return true;
     }
 
