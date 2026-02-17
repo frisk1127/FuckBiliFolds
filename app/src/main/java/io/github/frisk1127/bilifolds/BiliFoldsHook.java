@@ -55,6 +55,8 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
     private static final ConcurrentHashMap<Long, Boolean> DEBUG_MARK_LOGGED = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<Long, Boolean> DEBUG_MARK_DETAIL_LOGGED = new ConcurrentHashMap<>();
     private static final Set<Object> AUTO_EXPAND_ZIP = java.util.Collections.newSetFromMap(new java.util.WeakHashMap<Object, Boolean>());
+    private static final Map<View, Long> VIEWCONV_ID = java.util.Collections.synchronizedMap(new java.util.WeakHashMap<View, Long>());
+    private static final Set<View> VIEWCONV_LISTENER = java.util.Collections.newSetFromMap(new java.util.WeakHashMap<View, Boolean>());
 
     private static final String AUTO_EXPAND_TEXT = "已自动展开折叠评论";
 
@@ -318,13 +320,11 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         TextView tvC = getBindingTextView(binding, "c", "f400668c");
         TextView anchor = null;
         if (tvI != null && containsText(tvI, "查看对话")) {
-            stripFoldSuffix(tvI);
-            appendFoldToText(tvI);
+            ensureViewConvMark(tvI, id);
             logMarkOnce(id, "mark append viewConv(h0)");
             return true;
         } else if (tvH != null && containsText(tvH, "查看对话")) {
-            stripFoldSuffix(tvH);
-            appendFoldToText(tvH);
+            ensureViewConvMark(tvH, id);
             logMarkOnce(id, "mark append viewConv(h0)");
             return true;
         } else if (tvI != null && hasText(tvI)) {
@@ -363,8 +363,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         }
         TextView viewConv = findTextViewContains(actionRow, "查看对话");
         if (viewConv != null) {
-            stripFoldSuffix(viewConv);
-            appendFoldToText(viewConv);
+            ensureViewConvMark(viewConv, id);
             logMarkOnce(id, "mark append viewConv (fallback)");
             return true;
         }
@@ -389,6 +388,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         removeFoldMark(root);
         TextView viewConv = findTextViewContains(root, "查看对话");
         if (viewConv == null) return;
+        VIEWCONV_ID.remove(viewConv);
         stripFoldSuffix(viewConv);
     }
 
@@ -424,6 +424,51 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         cleaned = cleaned.replace(" · " + FOLD_MARK_TEXT, "").replace(FOLD_MARK_TEXT, "");
         cleaned = cleaned.replace(" · 折叠", "").replace("折叠", "");
         tv.setText(cleaned.trim());
+    }
+
+    private static void ensureViewConvMark(final TextView viewConv, final long id) {
+        if (viewConv == null || id == 0L) return;
+        VIEWCONV_ID.put(viewConv, id);
+        appendFoldAfterStrip(viewConv, id);
+        viewConv.post(new Runnable() {
+            @Override
+            public void run() {
+                appendFoldAfterStrip(viewConv, id);
+            }
+        });
+        if (VIEWCONV_LISTENER.add(viewConv)) {
+            viewConv.addOnLayoutChangeListener(new View.OnLayoutChangeListener() {
+                @Override
+                public void onLayoutChange(View v, int left, int top, int right, int bottom,
+                                           int oldLeft, int oldTop, int oldRight, int oldBottom) {
+                    Long curId = VIEWCONV_ID.get(viewConv);
+                    if (curId == null) return;
+                    if (Boolean.TRUE.equals(FOLDED_IDS.get(curId))) {
+                        appendFoldAfterStrip(viewConv, curId);
+                    } else {
+                        stripFoldSuffix(viewConv);
+                    }
+                }
+            });
+            viewConv.addOnAttachStateChangeListener(new View.OnAttachStateChangeListener() {
+                @Override
+                public void onViewDetachedFromWindow(View v) {
+                    VIEWCONV_ID.remove(v);
+                    VIEWCONV_LISTENER.remove(v);
+                }
+
+                @Override
+                public void onViewAttachedToWindow(View v) {
+                }
+            });
+        }
+    }
+
+    private static void appendFoldAfterStrip(TextView tv, long id) {
+        if (tv == null) return;
+        if (!Boolean.TRUE.equals(FOLDED_IDS.get(id))) return;
+        stripFoldSuffix(tv);
+        appendFoldToText(tv);
     }
 
     private static void logMarkOnce(long id, String msg) {
