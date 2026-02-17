@@ -408,6 +408,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             mark.setTextColor(base.getCurrentTextColor());
             mark.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX, base.getTextSize());
         }
+        mark.setSingleLine(true);
         mark.setTag("BiliFoldsMark");
         mark.setClickable(false);
         mark.setFocusable(false);
@@ -573,6 +574,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                             ViewGroup.LayoutParams.WRAP_CONTENT,
                             ViewGroup.LayoutParams.WRAP_CONTENT
                     );
+            lp.startToStart = androidx.constraintlayout.widget.ConstraintLayout.LayoutParams.PARENT_ID;
             lp.endToStart = anchor.getId();
             lp.topToTop = anchor.getId();
             lp.bottomToBottom = anchor.getId();
@@ -580,6 +582,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                 lp.baselineToBaseline = anchor.getId();
             }
             lp.setMarginEnd(dp(group.getContext(), 6));
+            lp.horizontalBias = 1.0f;
             mark.setLayoutParams(lp);
             mark.setId(View.generateViewId());
             group.addView(mark);
