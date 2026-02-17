@@ -58,6 +58,8 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
 
     private static volatile Object FOLD_TAG_TEMPLATE = null;
     private static volatile ClassLoader FOLD_TAG_CL = null;
+    private static volatile Field COMMENT_TIME_FIELD = null;
+    private static volatile boolean COMMENT_TIME_IS_MILLIS = false;
 
     @Override
     public void handleLoadPackage(XC_LoadPackage.LoadPackageParam lpparam) {
@@ -68,6 +70,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         APP_CL = lpparam.classLoader;
         safeHook("hookReplyControl", new Runnable() { @Override public void run() { hookReplyControl(APP_CL); } });
         safeHook("hookCommentItemTags", new Runnable() { @Override public void run() { hookCommentItemTags(APP_CL); } });
+        safeHook("hookCommentItemFoldFlags", new Runnable() { @Override public void run() { hookCommentItemFoldFlags(APP_CL); } });
         safeHook("hookZipDataSource", new Runnable() { @Override public void run() { hookZipDataSource(APP_CL); } });
         safeHook("hookDetailListDataSource", new Runnable() { @Override public void run() { hookDetailListDataSource(APP_CL); } });
         safeHook("hookCommentListAdapter", new Runnable() { @Override public void run() { hookCommentListAdapter(APP_CL); } });
@@ -190,7 +193,6 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                 List<?> list = (List<?>) listObj;
                 if (!containsFooterCard(list)) {
                     prefetchFoldList(list);
-                    return;
                 }
                 List<?> replaced = replaceZipCardsInList(list, "CommentListAdapter.b1");
                 if (replaced != null) {
@@ -363,6 +365,33 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                 param.setResult(out);
             }
         });
+    }
+
+    private static void hookCommentItemFoldFlags(ClassLoader cl) {
+        Class<?> c = XposedHelpers.findClassIfExists(
+                "com.bilibili.app.comment3.data.model.CommentItem",
+                cl
+        );
+        if (c == null) {
+            log("CommentItem class not found");
+            return;
+        }
+        hookBooleanMethodReturnFalse(c, "D");
+        hookBooleanMethodReturnFalse(c, "isFolded");
+        hookBooleanMethodReturnFalse(c, "getIsFolded");
+        hookBooleanMethodReturnFalse(c, "getIsFoldedReply");
+    }
+
+    private static void hookBooleanMethodReturnFalse(Class<?> c, String name) {
+        try {
+            XposedHelpers.findAndHookMethod(c, name, new XC_MethodReplacement() {
+                @Override
+                protected Object replaceHookedMethod(MethodHookParam param) {
+                    return false;
+                }
+            });
+        } catch (Throwable ignored) {
+        }
     }
 
     private static List<?> replaceZipCardsInList(List<?> list, String tag) {
@@ -820,7 +849,74 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             if (v instanceof Long) return (Long) v;
         } catch (Throwable ignored) {
         }
+        try {
+            Object v = XposedHelpers.callMethod(item, "getCtime");
+            if (v instanceof Long) return (Long) v;
+        } catch (Throwable ignored) {
+        }
+        if (COMMENT_TIME_FIELD != null) {
+            try {
+                COMMENT_TIME_FIELD.setAccessible(true);
+                Object v = COMMENT_TIME_FIELD.get(item);
+                if (v instanceof Number) {
+                    long t = ((Number) v).longValue();
+                    if (COMMENT_TIME_IS_MILLIS && t > 0) return t / 1000L;
+                    return t;
+                }
+            } catch (Throwable ignored) {
+            }
+        }
+        findCommentTimeField(item);
+        if (COMMENT_TIME_FIELD != null) {
+            try {
+                COMMENT_TIME_FIELD.setAccessible(true);
+                Object v = COMMENT_TIME_FIELD.get(item);
+                if (v instanceof Number) {
+                    long t = ((Number) v).longValue();
+                    if (COMMENT_TIME_IS_MILLIS && t > 0) return t / 1000L;
+                    return t;
+                }
+            } catch (Throwable ignored) {
+            }
+        }
         return 0L;
+    }
+
+    private static void findCommentTimeField(Object item) {
+        if (item == null || COMMENT_TIME_FIELD != null) return;
+        Field bestField = null;
+        int bestScore = 0;
+        boolean bestMillis = false;
+        Field[] fields = item.getClass().getDeclaredFields();
+        for (Field f : fields) {
+            try {
+                f.setAccessible(true);
+                Object v = f.get(item);
+                if (!(v instanceof Number)) continue;
+                long t = ((Number) v).longValue();
+                if (t <= 0) continue;
+                boolean isMillis = t > 1_000_000_000_000L;
+                long sec = isMillis ? t / 1000L : t;
+                if (sec < 1_000_000_000L || sec > 4_200_000_000L) continue;
+                int score = 1;
+                String n = f.getName();
+                if (n != null) {
+                    String s = n.toLowerCase();
+                    if (s.contains("ctime") || s.contains("time") || s.contains("date") || s.contains("ts")) score += 3;
+                    if (s.contains("create") || s.contains("publish")) score += 2;
+                }
+                if (score > bestScore) {
+                    bestScore = score;
+                    bestField = f;
+                    bestMillis = isMillis;
+                }
+            } catch (Throwable ignored) {
+            }
+        }
+        if (bestField != null) {
+            COMMENT_TIME_FIELD = bestField;
+            COMMENT_TIME_IS_MILLIS = bestMillis;
+        }
     }
 
     private static long getId(Object item) {
