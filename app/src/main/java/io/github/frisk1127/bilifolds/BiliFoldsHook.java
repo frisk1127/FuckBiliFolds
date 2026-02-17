@@ -7,6 +7,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -467,6 +468,8 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             subjectKey = deriveSubjectKeyFromList(list);
         }
         HashSet<Long> existingIds = collectCommentIds(list);
+        HashMap<Long, ArrayList<Object>> tipsByRoot = new HashMap<>();
+        ArrayList<Object> tipsNoRoot = new ArrayList<>();
         for (int i = 0; i < list.size(); i++) {
             Object item = list.get(i);
             if (isFooterCard(item)) {
@@ -497,7 +500,12 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                     continue;
                 }
                 markAutoExpand(item);
-                out.add(item);
+                if (rootId > 0) {
+                    ArrayList<Object> tips = tipsByRoot.computeIfAbsent(rootId, k -> new ArrayList<>());
+                    tips.add(item);
+                } else {
+                    tipsNoRoot.add(item);
+                }
                 for (Object o : cached) {
                     long id = getId(o);
                     if (id != 0 && existingIds.contains(id)) {
@@ -523,8 +531,33 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             SUBJECT_EXPANDED.put(subjectKey, Boolean.TRUE);
         }
         List<Object> resorted = reorderCommentsByTime(out);
-        if (resorted != null) return resorted;
-        return out;
+        List<Object> base = resorted != null ? resorted : out;
+        if (!tipsByRoot.isEmpty() || !tipsNoRoot.isEmpty()) {
+            ArrayList<Object> withTips = new ArrayList<>(base.size() + tipsByRoot.size() + tipsNoRoot.size());
+            for (Object item : base) {
+                withTips.add(item);
+                if (!isCommentItem(item)) continue;
+                long id = getId(item);
+                ArrayList<Object> tips = tipsByRoot.remove(id);
+                if (tips == null) {
+                    long root = getRootId(item);
+                    tips = tipsByRoot.remove(root);
+                }
+                if (tips != null && !tips.isEmpty()) {
+                    withTips.addAll(tips);
+                }
+            }
+            if (!tipsByRoot.isEmpty()) {
+                for (ArrayList<Object> tips : tipsByRoot.values()) {
+                    if (tips != null) withTips.addAll(tips);
+                }
+            }
+            if (!tipsNoRoot.isEmpty()) {
+                withTips.addAll(tipsNoRoot);
+            }
+            return withTips;
+        }
+        return base;
     }
 
     private static boolean injectCachedByPendingOffsets(ArrayList<Object> out, HashSet<Long> existingIds) {
