@@ -261,7 +261,9 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                             clearFoldMarkFromView((View) itemViewObj);
                             return;
                         }
-                        applyFoldMarkToView((View) itemViewObj, id);
+                        if (!applyFoldMarkToHolder(holder, id)) {
+                            applyFoldMarkToView((View) itemViewObj, id);
+                        }
                     } catch (Throwable ignored) {
                     }
                 }
@@ -291,7 +293,29 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         return list.get(pos);
     }
 
-    private static boolean applyFoldMarkToView(View root, long id) {
+    private static boolean applyFoldMarkToHolder(Object holder, long id) {
+        if (holder == null) return false;
+        String cls = holder.getClass().getName();
+        if (!"com.bilibili.app.comment3.ui.holder.h0".equals(cls)) {
+            return false;
+        }
+        try {
+            Object binding = XposedHelpers.callMethod(holder, "x1");
+            if (binding == null) return false;
+            Object rootObj;
+            try {
+                rootObj = XposedHelpers.callMethod(binding, "getRoot");
+            } catch (Throwable ignored) {
+                rootObj = XposedHelpers.getObjectField(binding, "f400666a");
+            }
+            if (!(rootObj instanceof View)) return false;
+            return applyFoldMarkToActionRow((View) rootObj, id);
+        } catch (Throwable ignored) {
+        }
+        return false;
+    }
+
+    private static boolean applyFoldMarkToActionRow(View root, long id) {
         if (root == null) return false;
         removeFoldMark(root);
         TextView viewConv = findTextViewContains(root, "查看对话");
@@ -302,17 +326,13 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                 ViewGroup group = (ViewGroup) parent;
                 if (hasFoldMark(group)) return true;
                 TextView mark = newFoldMark(group, viewConv);
-                int index = group.indexOfChild(viewConv);
-                if (index < 0) index = group.getChildCount();
-                group.addView(mark, Math.min(index + 1, group.getChildCount()));
-                logMarkOnce(id, "mark after viewConv");
-                return true;
+                if (addMarkAfterAnchor(group, viewConv, mark)) {
+                    logMarkOnce(id, "mark after viewConv");
+                    return true;
+                }
             }
-            appendFoldToText(viewConv);
-            logMarkOnce(id, "mark append viewConv");
-            return true;
         }
-        ViewGroup actionRow = findActionRow(root);
+        ViewGroup actionRow = (root instanceof ViewGroup) ? (ViewGroup) root : null;
         if (actionRow == null) {
             logMarkOnce(id, "mark skip: no action row");
             return false;
@@ -326,11 +346,46 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         if (hasFoldMark(actionRow)) return true;
         TextView base = (anchor instanceof TextView) ? (TextView) anchor : findFirstTextView(actionRow);
         TextView mark = newFoldMark(actionRow, base);
-        int index = actionRow.indexOfChild(anchor);
-        if (index < 0) index = actionRow.getChildCount();
-        actionRow.addView(mark, Math.min(index + 1, actionRow.getChildCount()));
-        logMarkOnce(id, "mark after anchor");
-        return true;
+        if (addMarkAfterAnchor(actionRow, anchor, mark)) {
+            logMarkOnce(id, "mark after anchor");
+            return true;
+        }
+        return false;
+    }
+
+    private static boolean applyFoldMarkToView(View root, long id) {
+        if (root == null) return false;
+        ViewGroup actionRow = findActionRow(root);
+        if (actionRow == null) {
+            logMarkOnce(id, "mark skip: no action row (fallback)");
+            return false;
+        }
+        TextView viewConv = findTextViewContains(actionRow, "查看对话");
+        if (viewConv != null) {
+            stripFoldSuffix(viewConv);
+            if (!hasFoldMark(actionRow)) {
+                TextView mark = newFoldMark(actionRow, viewConv);
+                if (addMarkAfterAnchor(actionRow, viewConv, mark)) {
+                    logMarkOnce(id, "mark after viewConv (fallback)");
+                    return true;
+                }
+            }
+            return true;
+        }
+        View anchor = findActionAnchor(actionRow);
+        if (anchor == null) {
+            logMarkOnce(id, "mark skip: no anchor (fallback)");
+            logActionRowOnce(id, actionRow);
+            return false;
+        }
+        if (hasFoldMark(actionRow)) return true;
+        TextView base = (anchor instanceof TextView) ? (TextView) anchor : findFirstTextView(actionRow);
+        TextView mark = newFoldMark(actionRow, base);
+        if (addMarkAfterAnchor(actionRow, anchor, mark)) {
+            logMarkOnce(id, "mark after anchor (fallback)");
+            return true;
+        }
+        return false;
     }
 
     private static void clearFoldMarkFromView(View root) {
@@ -403,16 +458,54 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
     }
 
     private static View findActionAnchor(ViewGroup actionRow) {
-        TextView viewConv = findTextViewClickableContains(actionRow, "查看对话");
+        TextView viewConv = findTextViewContains(actionRow, "查看对话");
         if (viewConv != null) {
             stripFoldSuffix(viewConv);
             return viewConv;
         }
-        TextView reply = findTextViewExactClickable(actionRow, "回复");
+        TextView reply = findTextViewContains(actionRow, "回复");
         if (reply != null) return reply;
         View byDesc = findViewByDescContains(actionRow, new String[]{"回复", "评论", "对话", "查看"});
         if (byDesc != null) return byDesc;
         return null;
+    }
+
+    private static boolean addMarkAfterAnchor(ViewGroup group, View anchor, TextView mark) {
+        if (group == null || anchor == null || mark == null) return false;
+        if (group instanceof androidx.constraintlayout.widget.ConstraintLayout) {
+            if (anchor.getId() == View.NO_ID) {
+                anchor.setId(View.generateViewId());
+            }
+            androidx.constraintlayout.widget.ConstraintLayout.LayoutParams lp =
+                    new androidx.constraintlayout.widget.ConstraintLayout.LayoutParams(
+                            ViewGroup.LayoutParams.WRAP_CONTENT,
+                            ViewGroup.LayoutParams.WRAP_CONTENT
+                    );
+            lp.startToEnd = anchor.getId();
+            lp.topToTop = anchor.getId();
+            lp.bottomToBottom = anchor.getId();
+            if (anchor instanceof TextView) {
+                lp.baselineToBaseline = anchor.getId();
+            }
+            lp.setMarginStart(dp(group.getContext(), 6));
+            mark.setLayoutParams(lp);
+            mark.setId(View.generateViewId());
+            group.addView(mark);
+            return true;
+        }
+        int index = group.indexOfChild(anchor);
+        if (index < 0) index = group.getChildCount();
+        group.addView(mark, Math.min(index + 1, group.getChildCount()));
+        return true;
+    }
+
+    private static int dp(android.content.Context ctx, int dp) {
+        if (ctx == null) return dp;
+        return (int) android.util.TypedValue.applyDimension(
+                android.util.TypedValue.COMPLEX_UNIT_DIP,
+                dp,
+                ctx.getResources().getDisplayMetrics()
+        );
     }
 
     private static View findViewByDescContains(View root, String[] keywords) {
