@@ -43,7 +43,6 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
     private static final ConcurrentHashMap<String, ArrayList<Object>> FOLD_CACHE_BY_OFFSET = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<String, Long> OFFSET_TO_ROOT = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<String, Boolean> AUTO_FETCHING = new ConcurrentHashMap<>();
-    private static final ConcurrentHashMap<Long, Boolean> AUTO_FETCHING_ROOT = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<Long, Boolean> FOLDED_IDS = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<String, Integer> OFFSET_INSERT_INDEX = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<String, Boolean> SUBJECT_HAS_FOLD = new ConcurrentHashMap<>();
@@ -523,14 +522,6 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                 continue;
             }
             out.add(item);
-            if (isCommentItem(item)) {
-                if (tryInjectFoldedChildrenForRoot(out, item, existingIds)) {
-                    changed = true;
-                } else if (shouldFetchFoldByRoot(item)) {
-                    long rootId = getRootId(item);
-                    tryAutoFetchFoldListByRoot(rootId);
-                }
-            }
         }
         if (injectCachedByPendingOffsets(out, existingIds)) {
             changed = true;
@@ -603,226 +594,6 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             }
         }
         return changed;
-    }
-
-    private static boolean tryInjectFoldedChildrenForRoot(ArrayList<Object> out, Object item, HashSet<Long> existingIds) {
-        if (out == null || !isCommentItem(item)) return false;
-        long rootId = getRootId(item);
-        if (rootId == 0L) return false;
-        ArrayList<Object> cached = FOLD_CACHE.get(rootId);
-        if (cached == null || cached.isEmpty()) return false;
-        int inserted = 0;
-        for (Object o : cached) {
-            long id = getId(o);
-            if (id != 0 && existingIds.contains(id)) continue;
-            out.add(o);
-            inserted++;
-            if (id != 0) {
-                existingIds.add(id);
-                FOLDED_IDS.put(id, Boolean.TRUE);
-            }
-        }
-        return inserted > 0;
-    }
-
-    private static boolean shouldFetchFoldByRoot(Object item) {
-        if (!isCommentItem(item)) return false;
-        long rootId = getRootId(item);
-        if (rootId == 0L) return false;
-        if (FOLD_CACHE.containsKey(rootId)) return false;
-        if (AUTO_FETCHING_ROOT.containsKey(rootId)) return false;
-        int folded = getFoldedCount(item);
-        if (folded > 0) return true;
-        int total = getReplyCount(item);
-        int child = getChildCount(item);
-        return total > 0 && child >= 0 && total - child >= 2;
-    }
-
-    private static int getFoldedCount(Object item) {
-        int v = getIntByMethodNames(item,
-                "getFoldedCount",
-                "getFoldedReplyCount",
-                "getFoldCount",
-                "getFoldedNum",
-                "getFoldNum",
-                "getInvisibleReplyCount",
-                "getInvisibleCount"
-        );
-        if (v > 0) return v;
-        v = getIntFieldByNameContains(item, new String[]{"fold"});
-        if (v > 0) return v;
-        return getIntFieldByNameContains(item, new String[]{"invisible"});
-    }
-
-    private static int getReplyCount(Object item) {
-        int v = getIntByMethodNames(item,
-                "getReplyCount",
-                "getRepliesCount",
-                "getSubReplyCount",
-                "getChildrenCount",
-                "getAllCount",
-                "getCount"
-        );
-        if (v > 0) return v;
-        v = getIntFieldByNameContains(item, new String[]{"reply", "count"});
-        if (v > 0) return v;
-        return getIntFieldByNameContains(item, new String[]{"count"});
-    }
-
-    private static int getChildCount(Object item) {
-        int v = getIntByMethodNames(item,
-                "getChildCount",
-                "getChildrenCount",
-                "getVisibleReplyCount",
-                "getVisibleCount"
-        );
-        if (v >= 0) return v;
-        v = getIntFieldByNameContains(item, new String[]{"child", "count"});
-        if (v >= 0) return v;
-        return getIntFieldByNameContains(item, new String[]{"visible", "count"});
-    }
-
-    private static int getIntByMethodNames(Object item, String... names) {
-        if (item == null || names == null) return -1;
-        for (String name : names) {
-            int v = callIntMethod(item, name);
-            if (v != Integer.MIN_VALUE) return v;
-        }
-        return -1;
-    }
-
-    private static int getIntFieldByNameContains(Object item, String[] must) {
-        if (item == null || must == null) return -1;
-        Field[] fields = item.getClass().getDeclaredFields();
-        for (Field f : fields) {
-            String n = f.getName();
-            if (n == null) continue;
-            String s = n.toLowerCase();
-            boolean ok = true;
-            for (String token : must) {
-                if (token == null) continue;
-                if (!s.contains(token)) {
-                    ok = false;
-                    break;
-                }
-            }
-            if (!ok) continue;
-            try {
-                f.setAccessible(true);
-                Object v = f.get(item);
-                if (!(v instanceof Number)) continue;
-                int iv = ((Number) v).intValue();
-                if (iv >= 0) return iv;
-            } catch (Throwable ignored) {
-            }
-        }
-        return -1;
-    }
-
-    private static void tryAutoFetchFoldListByRoot(long rootId) {
-        if (rootId == 0L) return;
-        if (FOLD_CACHE.containsKey(rootId)) return;
-        if (AUTO_FETCHING_ROOT.putIfAbsent(rootId, Boolean.TRUE) != null) return;
-        final Object subjectId = LAST_SUBJECT_ID == null ? null : LAST_SUBJECT_ID.get();
-        if (subjectId == null) {
-            AUTO_FETCHING_ROOT.remove(rootId);
-            return;
-        }
-        final String extra = LAST_EXTRA;
-        new Thread(new Runnable() {
-            @Override
-            public void run() {
-                try {
-                    Object detail = fetchDetailList(subjectId, rootId, extra);
-                    if (detail != null) {
-                        cacheFoldListByRoot("auto.detail.root", rootId, detail);
-                    }
-                } catch (Throwable ignored) {
-                } finally {
-                    AUTO_FETCHING_ROOT.remove(rootId);
-                }
-            }
-        }, "BiliFoldsFetchRoot").start();
-    }
-
-    private static void cacheFoldListByRoot(String tag, long rootId, Object obj) {
-        if (rootId == 0L) return;
-        List<?> list = extractList(obj);
-        if (list == null || list.size() <= 1) {
-            List<Object> collected = collectCommentItems(obj, 2);
-            if (collected != null && !collected.isEmpty()) {
-                list = collected;
-            }
-        }
-        if (list == null || list.isEmpty()) return;
-        ArrayList<Object> bucket = new ArrayList<>(list.size());
-        for (Object o : list) {
-            if (o == null || !isCommentItem(o)) continue;
-            long id = getId(o);
-            long root = getRootId(o);
-            if (id == rootId) continue;
-            if (root != 0L && root != rootId) continue;
-            forceUnfold(o);
-            bucket.add(o);
-        }
-        if (bucket.isEmpty()) return;
-        for (Object o : bucket) {
-            long id = getId(o);
-            if (id != 0) {
-                FOLDED_IDS.put(id, Boolean.TRUE);
-            }
-        }
-        ArrayList<Object> existing = FOLD_CACHE.computeIfAbsent(rootId, k -> new ArrayList<>());
-        mergeUniqueById(existing, bucket);
-        tryUpdateCommentAdapterListByRoot(rootId);
-    }
-
-    private static void tryUpdateCommentAdapterListByRoot(long rootId) {
-        Object adapter = LAST_COMMENT_ADAPTER == null ? null : LAST_COMMENT_ADAPTER.get();
-        if (adapter == null) return;
-        Object differ;
-        try {
-            differ = XposedHelpers.getObjectField(adapter, "c");
-        } catch (Throwable ignored) {
-            return;
-        }
-        if (differ == null) return;
-        Object listObj;
-        try {
-            listObj = XposedHelpers.callMethod(differ, "a");
-        } catch (Throwable ignored) {
-            listObj = null;
-        }
-        if (!(listObj instanceof List)) return;
-        List<?> list = (List<?>) listObj;
-        List<?> replaced = replaceZipCardsInList(list, "CommentListAdapter.cached.root");
-        if (replaced == null) return;
-        String retryKey = "root:" + rootId;
-        if (!containsFooterCard(list)) {
-            if (scheduleFooterRetry(retryKey)) {
-                return;
-            }
-        } else {
-            clearFooterRetry(retryKey);
-        }
-        postToMain(new Runnable() {
-            @Override
-            public void run() {
-                try {
-                    if (Boolean.TRUE.equals(RESUBMITTING.get())) return;
-                    RESUBMITTING.set(true);
-                    if (!callCommentAdapterB1(adapter, replaced)) {
-                        List rawList = (List) list;
-                        rawList.clear();
-                        rawList.addAll((List) replaced);
-                        XposedHelpers.callMethod(adapter, "notifyDataSetChanged");
-                    }
-                } catch (Throwable ignored) {
-                } finally {
-                    RESUBMITTING.set(false);
-                }
-            }
-        });
     }
 
     private static void prefetchFoldList(List<?> list) {
@@ -1215,7 +986,6 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         OFFSET_TO_ROOT.clear();
         OFFSET_INSERT_INDEX.clear();
         AUTO_FETCHING.clear();
-        AUTO_FETCHING_ROOT.clear();
         FOLDED_IDS.clear();
         SUBJECT_HAS_FOLD.clear();
         SUBJECT_EXPANDED.clear();
