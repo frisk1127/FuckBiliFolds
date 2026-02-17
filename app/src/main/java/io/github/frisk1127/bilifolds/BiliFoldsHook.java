@@ -301,7 +301,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         TextView viewConv = findTextViewClickableContains(actionRow, "查看对话");
         if (viewConv != null) {
             stripFoldSuffix(viewConv);
-            if (hasFoldMark(actionRow)) return;
+            if (hasFoldMark(actionRow)) return true;
             TextView mark = newFoldMark(actionRow, viewConv);
             int index = actionRow.indexOfChild(viewConv);
             if (index < 0) index = actionRow.getChildCount();
@@ -314,7 +314,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             logMarkOnce(id, "mark skip: no reply/viewConv");
             return false;
         }
-        if (hasFoldMark(actionRow)) return;
+        if (hasFoldMark(actionRow)) return true;
         TextView mark = newFoldMark(actionRow, reply);
         actionRow.addView(mark, actionRow.getChildCount());
         logMarkOnce(id, "mark after reply");
