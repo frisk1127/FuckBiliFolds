@@ -9,6 +9,7 @@ import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -43,6 +44,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
     private static final ConcurrentHashMap<String, Long> OFFSET_TO_ROOT = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<String, Boolean> AUTO_FETCHING = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<Long, Boolean> FOLDED_IDS = new ConcurrentHashMap<>();
+    private static final ConcurrentHashMap<String, Integer> OFFSET_INSERT_INDEX = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<String, AtomicInteger> LOG_COUNT = new ConcurrentHashMap<>();
     private static final int LOG_LIMIT = 80;
     private static final Set<String> TAG_ACCESSOR_METHODS = Collections.newSetFromMap(new ConcurrentHashMap<String, Boolean>());
@@ -466,25 +468,32 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             log("CommentItem class not found");
             return;
         }
-        XposedHelpers.findAndHookMethod(c, "getTags", new XC_MethodHook() {
-            @Override
-            protected void afterHookedMethod(MethodHookParam param) {
-                Object result = param.getResult();
-                if (!(result instanceof List)) return;
-                Object item = param.thisObject;
-                long id = getId(item);
-                if (id == 0) return;
-                if (!Boolean.TRUE.equals(FOLDED_IDS.get(id))) return;
-                List<?> tags = (List<?>) result;
-                if (containsFoldTag(tags)) return;
-                Object tag = buildFoldTag(item.getClass().getClassLoader());
-                if (tag == null) return;
-                ArrayList<Object> out = new ArrayList<>(tags.size() + 1);
-                out.addAll((List<?>) tags);
-                out.add(tag);
-                param.setResult(out);
+        try {
+            java.lang.reflect.Method[] methods = c.getDeclaredMethods();
+            for (java.lang.reflect.Method m : methods) {
+                if (!"getTags".equals(m.getName())) continue;
+                XposedBridge.hookMethod(m, new XC_MethodHook() {
+                    @Override
+                    protected void afterHookedMethod(MethodHookParam param) {
+                        Object result = param.getResult();
+                        if (!(result instanceof List)) return;
+                        Object item = param.thisObject;
+                        long id = getId(item);
+                        if (id == 0) return;
+                        if (!Boolean.TRUE.equals(FOLDED_IDS.get(id))) return;
+                        List<?> tags = (List<?>) result;
+                        if (containsFoldTag(tags)) return;
+                        Object tag = buildFoldTag(item.getClass().getClassLoader());
+                        if (tag == null) return;
+                        ArrayList<Object> out = new ArrayList<>(tags.size() + 1);
+                        out.addAll((List<?>) tags);
+                        out.add(tag);
+                        param.setResult(out);
+                    }
+                });
             }
-        });
+        } catch (Throwable ignored) {
+        }
     }
 
     private static void hookCommentItemFoldFlags(ClassLoader cl) {
@@ -534,6 +543,10 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                 if (offset != null && !offset.isEmpty() && rootCandidate > 0) {
                     OFFSET_TO_ROOT.put(offset, rootCandidate);
                 }
+                String key = makeOffsetKey(offset, getCurrentSubjectKey());
+                if (key != null) {
+                    OFFSET_INSERT_INDEX.put(key, i);
+                }
                 List<Object> cached = getCachedFoldListForZip(item, offset, desc);
                 if ((cached == null || cached.isEmpty()) && offset != null) {
                     long rootHint = findPrevCommentRootId(list, i);
@@ -549,7 +562,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                 if (cached == null || cached.isEmpty()) {
                     tryAutoFetchFoldList(offset, getCurrentSubjectKey(), rootCandidate);
                     logN("zip.cache.miss", "zip miss offset=" + offset + " tag=" + tag);
-                    out.add(item);
+                    changed = true;
                     continue;
                 }
                 int inserted = 0;
@@ -587,10 +600,43 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             }
             out.add(item);
         }
+        if (injectCachedByPendingOffsets(out, existingIds)) {
+            changed = true;
+        }
         if (!changed) return null;
         List<Object> resorted = reorderCommentsByTime(out);
         if (resorted != null) return resorted;
         return out;
+    }
+
+    private static boolean injectCachedByPendingOffsets(ArrayList<Object> out, HashSet<Long> existingIds) {
+        if (out == null) return false;
+        String subjectKey = getCurrentSubjectKey();
+        if (subjectKey == null || subjectKey.isEmpty()) return false;
+        String prefix = subjectKey + "|";
+        boolean changed = false;
+        for (Map.Entry<String, Integer> entry : new ArrayList<>(OFFSET_INSERT_INDEX.entrySet())) {
+            String key = entry.getKey();
+            if (key == null || !key.startsWith(prefix)) continue;
+            ArrayList<Object> cached = FOLD_CACHE_BY_OFFSET.get(key);
+            if (cached == null || cached.isEmpty()) continue;
+            int idx = entry.getValue() == null ? out.size() : entry.getValue();
+            if (idx < 0) idx = 0;
+            if (idx > out.size()) idx = out.size();
+            int inserted = 0;
+            for (Object o : cached) {
+                long id = getId(o);
+                if (id != 0 && existingIds.contains(id)) continue;
+                out.add(idx + inserted, o);
+                inserted++;
+                if (id != 0) existingIds.add(id);
+            }
+            if (inserted > 0) {
+                changed = true;
+                OFFSET_INSERT_INDEX.remove(key);
+            }
+        }
+        return changed;
     }
 
     private static void prefetchFoldList(List<?> list) {
