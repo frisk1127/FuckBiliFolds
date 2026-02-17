@@ -302,31 +302,34 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         try {
             Object binding = XposedHelpers.callMethod(holder, "x1");
             if (binding == null) return false;
-            return applyFoldMarkToCommentActionBar(binding, id);
+            Object itemViewObj = XposedHelpers.getObjectField(holder, "itemView");
+            View itemView = (itemViewObj instanceof View) ? (View) itemViewObj : null;
+            return applyFoldMarkToCommentActionBar(binding, id, itemView);
         } catch (Throwable ignored) {
         }
         return false;
     }
 
-    private static boolean applyFoldMarkToCommentActionBar(Object binding, long id) {
+    private static boolean applyFoldMarkToCommentActionBar(Object binding, long id, View itemView) {
         View root = getBindingRoot(binding);
         if (!(root instanceof ViewGroup)) return false;
         ViewGroup actionRow = (ViewGroup) root;
-        removeFoldMark(actionRow);
+        ViewGroup markRoot = (itemView instanceof ViewGroup) ? (ViewGroup) itemView : actionRow;
+        removeFoldMark(markRoot);
         TextView tvI = getBindingTextView(binding, "i", "f400674i");
         TextView tvH = getBindingTextView(binding, "h", "f400673h");
         TextView tvC = getBindingTextView(binding, "c", "f400668c");
         TextView anchor = null;
         if (tvI != null && containsText(tvI, "查看对话")) {
-            TextView mark = newFoldMark(actionRow, tvI);
-            if (addMarkAbsolute(actionRow, tvI, mark)) {
+            TextView mark = newFoldMark(markRoot, tvI);
+            if (addMarkAbsolute(markRoot, tvI, mark)) {
                 logMarkOnce(id, "mark abs viewConv(h0)");
                 return true;
             }
             return false;
         } else if (tvH != null && containsText(tvH, "查看对话")) {
-            TextView mark = newFoldMark(actionRow, tvH);
-            if (addMarkAbsolute(actionRow, tvH, mark)) {
+            TextView mark = newFoldMark(markRoot, tvH);
+            if (addMarkAbsolute(markRoot, tvH, mark)) {
                 logMarkOnce(id, "mark abs viewConv(h0)");
                 return true;
             }
@@ -350,9 +353,9 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             logActionRowOnce(id, actionRow);
             return false;
         }
-        if (hasFoldMark(actionRow)) return true;
-        TextView mark = newFoldMark(actionRow, anchor);
-        if (addMarkAbsolute(actionRow, anchor, mark)) {
+        if (hasFoldMark(markRoot)) return true;
+        TextView mark = newFoldMark(markRoot, anchor);
+        if (addMarkAbsolute(markRoot, anchor, mark)) {
             logMarkOnce(id, "mark abs anchor(h0)");
             return true;
         }
@@ -366,11 +369,12 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             logMarkOnce(id, "mark skip: no action row (fallback)");
             return false;
         }
-        removeFoldMark(actionRow);
+        ViewGroup markRoot = (root instanceof ViewGroup) ? (ViewGroup) root : actionRow;
+        removeFoldMark(markRoot);
         TextView viewConv = findTextViewContains(actionRow, "查看对话");
         if (viewConv != null) {
-            TextView mark = newFoldMark(actionRow, viewConv);
-            if (addMarkAbsolute(actionRow, viewConv, mark)) {
+            TextView mark = newFoldMark(markRoot, viewConv);
+            if (addMarkAbsolute(markRoot, viewConv, mark)) {
                 logMarkOnce(id, "mark abs viewConv (fallback)");
                 return true;
             }
@@ -382,10 +386,10 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             logActionRowOnce(id, actionRow);
             return false;
         }
-        if (hasFoldMark(actionRow)) return true;
+        if (hasFoldMark(markRoot)) return true;
         TextView base = (anchor instanceof TextView) ? (TextView) anchor : findFirstTextView(actionRow);
-        TextView mark = newFoldMark(actionRow, base);
-        if (addMarkAbsolute(actionRow, anchor, mark)) {
+        TextView mark = newFoldMark(markRoot, base);
+        if (addMarkAbsolute(markRoot, anchor, mark)) {
             logMarkOnce(id, "mark abs anchor (fallback)");
             return true;
         }
