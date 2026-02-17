@@ -421,6 +421,8 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         ArrayList<Object> existing = FOLD_CACHE_BY_OFFSET.computeIfAbsent(key, k -> new ArrayList<>());
         mergeUniqueById(existing, bucket);
         if (rootId != 0L) {
+            ArrayList<Object> byRoot = FOLD_CACHE.computeIfAbsent(rootId, k -> new ArrayList<>());
+            mergeUniqueById(byRoot, bucket);
             OFFSET_TO_ROOT.put(realOffset, rootId);
         }
         tryUpdateCommentAdapterList(realOffset);
@@ -571,6 +573,10 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         HashSet<Long> existingIds = collectCommentIds(list);
         for (int i = 0; i < list.size(); i++) {
             Object item = list.get(i);
+            if (isFooterCard(item)) {
+                out.add(item);
+                continue;
+            }
             if (isZipCard(item)) {
                 if (subjectKey != null) {
                     SUBJECT_HAS_FOLD.put(subjectKey, Boolean.TRUE);
