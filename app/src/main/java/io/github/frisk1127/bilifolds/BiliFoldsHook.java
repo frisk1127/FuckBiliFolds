@@ -294,6 +294,24 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
     private static boolean applyFoldMarkToView(View root, long id) {
         if (root == null) return false;
         removeFoldMark(root);
+        TextView viewConv = findTextViewContains(root, "查看对话");
+        if (viewConv != null) {
+            stripFoldSuffix(viewConv);
+            View parent = (View) viewConv.getParent();
+            if (parent instanceof ViewGroup) {
+                ViewGroup group = (ViewGroup) parent;
+                if (hasFoldMark(group)) return true;
+                TextView mark = newFoldMark(group, viewConv);
+                int index = group.indexOfChild(viewConv);
+                if (index < 0) index = group.getChildCount();
+                group.addView(mark, Math.min(index + 1, group.getChildCount()));
+                logMarkOnce(id, "mark after viewConv");
+                return true;
+            }
+            appendFoldToText(viewConv);
+            logMarkOnce(id, "mark append viewConv");
+            return true;
+        }
         ViewGroup actionRow = findActionRow(root);
         if (actionRow == null) {
             logMarkOnce(id, "mark skip: no action row");
