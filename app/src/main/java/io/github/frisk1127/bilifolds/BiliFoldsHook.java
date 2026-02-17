@@ -44,6 +44,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
     private static final ConcurrentHashMap<String, Long> OFFSET_TO_ROOT = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<String, Boolean> AUTO_FETCHING = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<Long, Boolean> FOLDED_IDS = new ConcurrentHashMap<>();
+    private static final ConcurrentHashMap<Long, Boolean> DEBUG_FOLD_LOGGED = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<String, Integer> OFFSET_INSERT_INDEX = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<String, Boolean> SUBJECT_HAS_FOLD = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<String, Boolean> SUBJECT_EXPANDED = new ConcurrentHashMap<>();
@@ -523,6 +524,9 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                 changed = true;
                 continue;
             }
+            if (isCommentItem(item)) {
+                debugLogCommentFold(item);
+            }
             if (item != null && "vv.r1".equals(item.getClass().getName())) {
                 String text = callStringMethod(item, "h");
                 String offset = getZipCardOffset(item);
@@ -604,6 +608,81 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             }
         }
         return changed;
+    }
+
+    private static void debugLogCommentFold(Object item) {
+        if (item == null || !isCommentItem(item)) return;
+        long rootId = getRootId(item);
+        if (rootId == 0L) return;
+        if (DEBUG_FOLD_LOGGED.putIfAbsent(rootId, Boolean.TRUE) != null) return;
+        int folded = getIntByMethodNames(item,
+                "getFoldedCount",
+                "getFoldedReplyCount",
+                "getFoldCount",
+                "getFoldedNum",
+                "getFoldNum",
+                "getInvisibleReplyCount",
+                "getInvisibleCount"
+        );
+        int invisible = getIntFieldByNameContains(item, new String[]{"invisible"});
+        int total = getIntByMethodNames(item,
+                "getReplyCount",
+                "getRepliesCount",
+                "getSubReplyCount",
+                "getAllCount",
+                "getCount"
+        );
+        int child = getIntByMethodNames(item,
+                "getChildCount",
+                "getChildrenCount",
+                "getVisibleReplyCount",
+                "getVisibleCount"
+        );
+        if (folded > 0 || invisible > 0 || (total > 0 && child >= 0 && total - child > 0)) {
+            log("comment fold stats root=" + rootId
+                    + " id=" + getId(item)
+                    + " folded=" + folded
+                    + " invisible=" + invisible
+                    + " total=" + total
+                    + " child=" + child);
+        }
+    }
+
+    private static int getIntByMethodNames(Object item, String... names) {
+        if (item == null || names == null) return -1;
+        for (String name : names) {
+            int v = callIntMethod(item, name);
+            if (v != Integer.MIN_VALUE) return v;
+        }
+        return -1;
+    }
+
+    private static int getIntFieldByNameContains(Object item, String[] must) {
+        if (item == null || must == null) return -1;
+        Field[] fields = item.getClass().getDeclaredFields();
+        for (Field f : fields) {
+            String n = f.getName();
+            if (n == null) continue;
+            String s = n.toLowerCase();
+            boolean ok = true;
+            for (String token : must) {
+                if (token == null) continue;
+                if (!s.contains(token)) {
+                    ok = false;
+                    break;
+                }
+            }
+            if (!ok) continue;
+            try {
+                f.setAccessible(true);
+                Object v = f.get(item);
+                if (!(v instanceof Number)) continue;
+                int iv = ((Number) v).intValue();
+                if (iv >= 0) return iv;
+            } catch (Throwable ignored) {
+            }
+        }
+        return -1;
     }
 
     private static void prefetchFoldList(List<?> list) {
