@@ -52,6 +52,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
     private static final ConcurrentHashMap<String, Integer> OFFSET_INSERT_INDEX = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<String, Boolean> SUBJECT_HAS_FOLD = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<String, Boolean> SUBJECT_EXPANDED = new ConcurrentHashMap<>();
+    private static final ConcurrentHashMap<Long, Boolean> DEBUG_MARK_LOGGED = new ConcurrentHashMap<>();
     private static final Set<Object> AUTO_EXPAND_ZIP = java.util.Collections.newSetFromMap(new java.util.WeakHashMap<Object, Boolean>());
 
     private static final String AUTO_EXPAND_TEXT = "已自动展开折叠评论";
@@ -259,7 +260,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                             clearFoldMarkFromView((View) itemViewObj);
                             return;
                         }
-                        applyFoldMarkToView((View) itemViewObj);
+                        applyFoldMarkToView((View) itemViewObj, id);
                     } catch (Throwable ignored) {
                     }
                 }
@@ -289,11 +290,14 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         return list.get(pos);
     }
 
-    private static void applyFoldMarkToView(View root) {
-        if (root == null) return;
+    private static boolean applyFoldMarkToView(View root, long id) {
+        if (root == null) return false;
         removeFoldMark(root);
         ViewGroup actionRow = findActionRow(root);
-        if (actionRow == null) return;
+        if (actionRow == null) {
+            logMarkOnce(id, "mark skip: no action row");
+            return false;
+        }
         TextView viewConv = findTextViewClickableContains(actionRow, "查看对话");
         if (viewConv != null) {
             stripFoldSuffix(viewConv);
@@ -302,13 +306,19 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             int index = actionRow.indexOfChild(viewConv);
             if (index < 0) index = actionRow.getChildCount();
             actionRow.addView(mark, Math.min(index + 1, actionRow.getChildCount()));
-            return;
+            logMarkOnce(id, "mark after viewConv");
+            return true;
         }
         TextView reply = findTextViewExactClickable(actionRow, "回复");
-        if (reply == null) return;
+        if (reply == null) {
+            logMarkOnce(id, "mark skip: no reply/viewConv");
+            return false;
+        }
         if (hasFoldMark(actionRow)) return;
         TextView mark = newFoldMark(actionRow, reply);
         actionRow.addView(mark, actionRow.getChildCount());
+        logMarkOnce(id, "mark after reply");
+        return true;
     }
 
     private static void clearFoldMarkFromView(View root) {
@@ -351,6 +361,12 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         cleaned = cleaned.replace(" · " + FOLD_MARK_TEXT, "").replace(FOLD_MARK_TEXT, "");
         cleaned = cleaned.replace(" · 折叠", "").replace("折叠", "");
         tv.setText(cleaned.trim());
+    }
+
+    private static void logMarkOnce(long id, String msg) {
+        if (id == 0L || msg == null) return;
+        if (DEBUG_MARK_LOGGED.putIfAbsent(id, Boolean.TRUE) != null) return;
+        log("mark id=" + id + " " + msg);
     }
 
     private static boolean hasFoldMark(ViewGroup group) {
