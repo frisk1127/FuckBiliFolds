@@ -53,6 +53,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
     private static final ConcurrentHashMap<String, Boolean> SUBJECT_HAS_FOLD = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<String, Boolean> SUBJECT_EXPANDED = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<Long, Boolean> DEBUG_MARK_LOGGED = new ConcurrentHashMap<>();
+    private static final ConcurrentHashMap<Long, Boolean> DEBUG_MARK_DETAIL_LOGGED = new ConcurrentHashMap<>();
     private static final Set<Object> AUTO_EXPAND_ZIP = java.util.Collections.newSetFromMap(new java.util.WeakHashMap<Object, Boolean>());
 
     private static final String AUTO_EXPAND_TEXT = "已自动展开折叠评论";
@@ -298,26 +299,19 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             logMarkOnce(id, "mark skip: no action row");
             return false;
         }
-        TextView viewConv = findTextViewClickableContains(actionRow, "查看对话");
-        if (viewConv != null) {
-            stripFoldSuffix(viewConv);
-            if (hasFoldMark(actionRow)) return true;
-            TextView mark = newFoldMark(actionRow, viewConv);
-            int index = actionRow.indexOfChild(viewConv);
-            if (index < 0) index = actionRow.getChildCount();
-            actionRow.addView(mark, Math.min(index + 1, actionRow.getChildCount()));
-            logMarkOnce(id, "mark after viewConv");
-            return true;
-        }
-        TextView reply = findTextViewExactClickable(actionRow, "回复");
-        if (reply == null) {
-            logMarkOnce(id, "mark skip: no reply/viewConv");
+        View anchor = findActionAnchor(actionRow);
+        if (anchor == null) {
+            logMarkOnce(id, "mark skip: no anchor");
+            logActionRowOnce(id, actionRow);
             return false;
         }
         if (hasFoldMark(actionRow)) return true;
-        TextView mark = newFoldMark(actionRow, reply);
-        actionRow.addView(mark, actionRow.getChildCount());
-        logMarkOnce(id, "mark after reply");
+        TextView base = (anchor instanceof TextView) ? (TextView) anchor : findFirstTextView(actionRow);
+        TextView mark = newFoldMark(actionRow, base);
+        int index = actionRow.indexOfChild(anchor);
+        if (index < 0) index = actionRow.getChildCount();
+        actionRow.addView(mark, Math.min(index + 1, actionRow.getChildCount()));
+        logMarkOnce(id, "mark after anchor");
         return true;
     }
 
@@ -367,6 +361,74 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         if (id == 0L || msg == null) return;
         if (DEBUG_MARK_LOGGED.putIfAbsent(id, Boolean.TRUE) != null) return;
         log("mark id=" + id + " " + msg);
+    }
+
+    private static void logActionRowOnce(long id, ViewGroup group) {
+        if (id == 0L || group == null) return;
+        if (DEBUG_MARK_DETAIL_LOGGED.putIfAbsent(id, Boolean.TRUE) != null) return;
+        StringBuilder sb = new StringBuilder();
+        sb.append("mark row id=").append(id)
+                .append(" cls=").append(group.getClass().getName())
+                .append(" child=").append(group.getChildCount());
+        for (int i = 0; i < group.getChildCount(); i++) {
+            View v = group.getChildAt(i);
+            if (v == null) continue;
+            sb.append(" [").append(i).append(":").append(v.getClass().getSimpleName());
+            CharSequence text = (v instanceof TextView) ? ((TextView) v).getText() : null;
+            CharSequence desc = v.getContentDescription();
+            if (text != null) sb.append(" t=").append(text);
+            if (desc != null) sb.append(" d=").append(desc);
+            if (v.isClickable()) sb.append(" c=1");
+            sb.append("]");
+        }
+        log(sb.toString());
+    }
+
+    private static View findActionAnchor(ViewGroup actionRow) {
+        TextView viewConv = findTextViewClickableContains(actionRow, "查看对话");
+        if (viewConv != null) {
+            stripFoldSuffix(viewConv);
+            return viewConv;
+        }
+        TextView reply = findTextViewExactClickable(actionRow, "回复");
+        if (reply != null) return reply;
+        View byDesc = findViewByDescContains(actionRow, new String[]{"回复", "评论", "对话", "查看"});
+        if (byDesc != null) return byDesc;
+        return null;
+    }
+
+    private static View findViewByDescContains(View root, String[] keywords) {
+        if (root == null || keywords == null) return null;
+        CharSequence desc = root.getContentDescription();
+        if (desc != null) {
+            String s = desc.toString();
+            for (String k : keywords) {
+                if (k != null && s.contains(k)) {
+                    return root;
+                }
+            }
+        }
+        if (root instanceof ViewGroup) {
+            ViewGroup group = (ViewGroup) root;
+            for (int i = 0; i < group.getChildCount(); i++) {
+                View v = group.getChildAt(i);
+                View hit = findViewByDescContains(v, keywords);
+                if (hit != null) return hit;
+            }
+        }
+        return null;
+    }
+
+    private static TextView findFirstTextView(View root) {
+        if (root instanceof TextView) return (TextView) root;
+        if (root instanceof ViewGroup) {
+            ViewGroup group = (ViewGroup) root;
+            for (int i = 0; i < group.getChildCount(); i++) {
+                TextView tv = findFirstTextView(group.getChildAt(i));
+                if (tv != null) return tv;
+            }
+        }
+        return null;
     }
 
     private static boolean hasFoldMark(ViewGroup group) {
