@@ -55,8 +55,6 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
     private static final ConcurrentHashMap<Long, Boolean> DEBUG_MARK_LOGGED = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<Long, Boolean> DEBUG_MARK_DETAIL_LOGGED = new ConcurrentHashMap<>();
     private static final Set<Object> AUTO_EXPAND_ZIP = java.util.Collections.newSetFromMap(new java.util.WeakHashMap<Object, Boolean>());
-    private static final Map<View, Long> VIEWCONV_ID = java.util.Collections.synchronizedMap(new java.util.WeakHashMap<View, Long>());
-    private static final Set<View> VIEWCONV_LISTENER = java.util.Collections.newSetFromMap(new java.util.WeakHashMap<View, Boolean>());
 
     private static final String AUTO_EXPAND_TEXT = "已自动展开折叠评论";
 
@@ -333,7 +331,14 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                 return true;
             }
             return false;
-        } else if (tvI != null && hasText(tvI)) {
+        }
+        TextView emptySlot = pickEmptyActionText(tvI, tvH, tvC);
+        if (emptySlot != null) {
+            setFoldTextOnSlot(emptySlot);
+            logMarkOnce(id, "mark use empty slot(h0)");
+            return true;
+        }
+        if (tvI != null && hasText(tvI)) {
             anchor = tvI;
         } else if (tvH != null && hasText(tvH)) {
             anchor = tvH;
@@ -376,6 +381,12 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             }
             return false;
         }
+        TextView emptySlot = pickEmptyActionText(actionRow);
+        if (emptySlot != null) {
+            setFoldTextOnSlot(emptySlot);
+            logMarkOnce(id, "mark use empty slot(fallback)");
+            return true;
+        }
         View anchor = findActionAnchor(actionRow);
         if (anchor == null) {
             logMarkOnce(id, "mark skip: no anchor (fallback)");
@@ -395,10 +406,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
     private static void clearFoldMarkFromView(View root) {
         if (root == null) return;
         removeFoldMark(root);
-        TextView viewConv = findTextViewContains(root, "查看对话");
-        if (viewConv == null) return;
-        VIEWCONV_ID.remove(viewConv);
-        stripFoldSuffix(viewConv);
+        stripFoldSuffixFromView(root);
     }
 
     private static TextView newFoldMark(ViewGroup group, TextView base) {
@@ -433,25 +441,74 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         String cleaned = s;
         cleaned = cleaned.replace(" · " + FOLD_MARK_TEXT, "").replace(FOLD_MARK_TEXT, "");
         cleaned = cleaned.replace(" · 折叠", "").replace("折叠", "");
-        tv.setText(cleaned.trim());
+        String result = cleaned.trim();
+        tv.setText(result);
+        if (result.isEmpty()) {
+            tv.setVisibility(View.GONE);
+        }
     }
 
-    private static void ensureViewConvMark(final TextView viewConv, final long id) {
-        if (viewConv == null || id == 0L) return;
-        VIEWCONV_ID.put(viewConv, id);
-        if (VIEWCONV_LISTENER.add(viewConv)) {
-            viewConv.addOnAttachStateChangeListener(new View.OnAttachStateChangeListener() {
-                @Override
-                public void onViewDetachedFromWindow(View v) {
-                    VIEWCONV_ID.remove(v);
-                    VIEWCONV_LISTENER.remove(v);
-                }
-
-                @Override
-                public void onViewAttachedToWindow(View v) {
-                }
-            });
+    private static void stripFoldSuffixFromView(View root) {
+        if (root == null) return;
+        if (root instanceof TextView) {
+            stripFoldSuffix((TextView) root);
+            return;
         }
+        if (root instanceof ViewGroup) {
+            ViewGroup group = (ViewGroup) root;
+            for (int i = 0; i < group.getChildCount(); i++) {
+                stripFoldSuffixFromView(group.getChildAt(i));
+            }
+        }
+    }
+
+    private static TextView pickEmptyActionText(TextView... tvs) {
+        if (tvs == null) return null;
+        for (TextView tv : tvs) {
+            if (tv == null) continue;
+            if (!hasText(tv)) return tv;
+        }
+        for (TextView tv : tvs) {
+            if (tv == null) continue;
+            int vis = tv.getVisibility();
+            if (vis != View.VISIBLE) return tv;
+        }
+        return null;
+    }
+
+    private static TextView pickEmptyActionText(ViewGroup group) {
+        if (group == null) return null;
+        List<TextView> candidates = new ArrayList<>();
+        collectTextViews(group, candidates);
+        for (TextView tv : candidates) {
+            if (!hasText(tv)) return tv;
+        }
+        for (TextView tv : candidates) {
+            int vis = tv.getVisibility();
+            if (vis != View.VISIBLE) return tv;
+        }
+        return null;
+    }
+
+    private static void collectTextViews(View root, List<TextView> out) {
+        if (root == null || out == null) return;
+        if (root instanceof TextView) {
+            out.add((TextView) root);
+            return;
+        }
+        if (root instanceof ViewGroup) {
+            ViewGroup group = (ViewGroup) root;
+            for (int i = 0; i < group.getChildCount(); i++) {
+                collectTextViews(group.getChildAt(i), out);
+            }
+        }
+    }
+
+    private static void setFoldTextOnSlot(TextView tv) {
+        if (tv == null) return;
+        stripFoldSuffix(tv);
+        tv.setText(FOLD_MARK_TEXT);
+        tv.setVisibility(View.VISIBLE);
     }
 
     private static void logMarkOnce(long id, String msg) {
