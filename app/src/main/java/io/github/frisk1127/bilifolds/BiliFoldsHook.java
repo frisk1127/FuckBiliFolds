@@ -41,6 +41,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
     private static final ConcurrentHashMap<String, ArrayList<Object>> FOLD_CACHE_BY_OFFSET = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<String, Long> OFFSET_TO_ROOT = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<String, Boolean> AUTO_FETCHING = new ConcurrentHashMap<>();
+    private static final ConcurrentHashMap<Long, Boolean> FOLDED_IDS = new ConcurrentHashMap<>();
 
     private static final ConcurrentHashMap<String, AtomicInteger> FOOTER_RETRY_COUNT = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<String, Boolean> FOOTER_RETRY_PENDING = new ConcurrentHashMap<>();
@@ -66,6 +67,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         log("active " + BUILD_TAG + " pkg=" + lpparam.packageName);
         APP_CL = lpparam.classLoader;
         safeHook("hookReplyControl", new Runnable() { @Override public void run() { hookReplyControl(APP_CL); } });
+        safeHook("hookCommentItemTags", new Runnable() { @Override public void run() { hookCommentItemTags(APP_CL); } });
         safeHook("hookZipDataSource", new Runnable() { @Override public void run() { hookZipDataSource(APP_CL); } });
         safeHook("hookDetailListDataSource", new Runnable() { @Override public void run() { hookDetailListDataSource(APP_CL); } });
         safeHook("hookCommentListAdapter", new Runnable() { @Override public void run() { hookCommentListAdapter(APP_CL); } });
@@ -262,7 +264,9 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             if (rootId != 0L && id == rootId) {
                 continue;
             }
-            markFoldedTag(o);
+            if (id != 0) {
+                FOLDED_IDS.put(id, Boolean.TRUE);
+            }
         }
         String realOffset = offset != null ? offset : extractOffsetFromObj(obj);
         if (realOffset == null) {
@@ -327,6 +331,36 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         });
     }
 
+    private static void hookCommentItemTags(ClassLoader cl) {
+        Class<?> c = XposedHelpers.findClassIfExists(
+                "com.bilibili.app.comment3.data.model.CommentItem",
+                cl
+        );
+        if (c == null) {
+            log("CommentItem class not found");
+            return;
+        }
+        XposedHelpers.findAndHookMethod(c, "getTags", new XC_MethodHook() {
+            @Override
+            protected void afterHookedMethod(MethodHookParam param) {
+                Object result = param.getResult();
+                if (!(result instanceof List)) return;
+                Object item = param.thisObject;
+                long id = getId(item);
+                if (id == 0) return;
+                if (!Boolean.TRUE.equals(FOLDED_IDS.get(id))) return;
+                List<?> tags = (List<?>) result;
+                if (containsFoldTag(tags)) return;
+                Object tag = buildFoldTag(item.getClass().getClassLoader());
+                if (tag == null) return;
+                ArrayList<Object> out = new ArrayList<>(tags.size() + 1);
+                out.addAll((List<?>) tags);
+                out.add(tag);
+                param.setResult(out);
+            }
+        });
+    }
+
     private static List<?> replaceZipCardsInList(List<?> list, String tag) {
         if (list == null || list.isEmpty()) return null;
         ArrayList<Object> out = new ArrayList<>(list.size());
@@ -337,9 +371,13 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             Object item = list.get(i);
             if (isZipCard(item)) {
                 String offset = getZipCardOffset(item);
+                long rootId = getZipCardRootId(item);
+                if (offset != null && !offset.isEmpty() && rootId > 0) {
+                    OFFSET_TO_ROOT.put(offset, rootId);
+                }
                 List<Object> cached = getCachedFoldListForZip(item, offset, desc);
                 if (cached == null || cached.isEmpty()) {
-                    tryAutoFetchFoldList(offset, getCurrentSubjectKey());
+                    tryAutoFetchFoldList(offset, getCurrentSubjectKey(), rootId);
                     out.add(item);
                     continue;
                 }
@@ -349,8 +387,8 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                         continue;
                     }
                     forceUnfold(o);
-                    if (getRootId(o) != id) {
-                        markFoldedTag(o);
+                    if (getRootId(o) != id && id != 0) {
+                        FOLDED_IDS.put(id, Boolean.TRUE);
                     }
                     out.add(o);
                     if (id != 0) existingIds.add(id);
@@ -361,6 +399,8 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             out.add(item);
         }
         if (!changed) return null;
+        List<Object> resorted = reorderCommentsByTime(out, desc);
+        if (resorted != null) return resorted;
         return out;
     }
 
@@ -382,7 +422,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         return cached;
     }
 
-    private static void tryAutoFetchFoldList(String offset, String subjectKey) {
+    private static void tryAutoFetchFoldList(String offset, String subjectKey, long rootId) {
         if (offset == null || offset.isEmpty()) return;
         String key = makeOffsetKey(offset, subjectKey);
         if (key != null && FOLD_CACHE_BY_OFFSET.containsKey(key)) return;
@@ -398,15 +438,22 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             LAST_SUBJECT_KEY = realSubjectKey;
         }
         final String extra = LAST_EXTRA;
-        final long rootId = getRootForOffset(offset);
+        final long rootIdFinal = rootId != 0L ? rootId : getRootForOffset(offset);
         new Thread(new Runnable() {
             @Override
             public void run() {
                 try {
+                    if (rootIdFinal != 0L) {
+                        Object detail = fetchDetailList(subjectId, rootIdFinal, extra);
+                        if (detail != null) {
+                            cacheFoldListResult("auto.detail", offset, detail);
+                            return;
+                        }
+                    }
                     String curOffset = offset;
                     int pages = 0;
                     while (curOffset != null && !curOffset.isEmpty() && pages < 5) {
-                        Object p0 = fetchFoldList(subjectId, curOffset, extra, true, rootId);
+                        Object p0 = fetchFoldList(subjectId, curOffset, extra, true, rootIdFinal);
                         if (p0 != null) {
                             cacheFoldListResult("auto.fetch", curOffset, p0);
                             List<?> p0List = extractList(p0);
@@ -1223,6 +1270,56 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         if (desc >= asc + 2) return true;
         if (asc >= desc + 2) return false;
         return null;
+    }
+
+    private static boolean shouldSortByTime() {
+        int mode = getSortModeValue(LAST_SORT_MODE);
+        if (mode == Integer.MIN_VALUE) return true;
+        return mode == 0;
+    }
+
+    private static boolean isSortableCommentItem(Object item) {
+        return isCommentItem(item) && getCreateTime(item) > 0;
+    }
+
+    private static List<Object> reorderCommentsByTime(List<Object> list, Boolean desc) {
+        if (list == null || list.size() < 2) return null;
+        if (!shouldSortByTime()) return null;
+        ArrayList<Object> comments = new ArrayList<>();
+        ArrayList<Long> original = new ArrayList<>();
+        for (Object item : list) {
+            if (!isSortableCommentItem(item)) continue;
+            comments.add(item);
+            original.add(getId(item));
+        }
+        if (comments.size() < 2) return null;
+        final boolean descOrder = desc == null ? false : desc;
+        Collections.sort(comments, new Comparator<Object>() {
+            @Override
+            public int compare(Object o1, Object o2) {
+                long t1 = getCreateTime(o1);
+                long t2 = getCreateTime(o2);
+                if (t1 != t2) {
+                    return descOrder ? Long.compare(t2, t1) : Long.compare(t1, t2);
+                }
+                long id1 = getId(o1);
+                long id2 = getId(o2);
+                return descOrder ? Long.compare(id2, id1) : Long.compare(id1, id2);
+            }
+        });
+        ArrayList<Long> sorted = new ArrayList<>(comments.size());
+        for (Object c : comments) sorted.add(getId(c));
+        if (original.equals(sorted)) return null;
+        ArrayList<Object> out = new ArrayList<>(list.size());
+        int idx = 0;
+        for (Object item : list) {
+            if (isSortableCommentItem(item)) {
+                out.add(comments.get(idx++));
+            } else {
+                out.add(item);
+            }
+        }
+        return out;
     }
 
     private static int getSortModeValue(Object sortMode) {
