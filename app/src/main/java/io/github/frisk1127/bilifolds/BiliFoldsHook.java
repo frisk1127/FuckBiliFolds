@@ -612,7 +612,6 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                 rootId = findPrevCommentRootId(list, i);
             }
             tryAutoFetchFoldList(offset, getCurrentSubjectKey(), rootId);
-            return;
         }
     }
 
