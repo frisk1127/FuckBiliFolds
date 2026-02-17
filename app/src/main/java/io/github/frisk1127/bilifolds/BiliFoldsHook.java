@@ -318,6 +318,12 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         TextView tvC = getBindingTextView(binding, "c", "f400668c");
         TextView anchor = null;
         if (tvI != null && containsText(tvI, "查看对话")) {
+            TextView slot = pickEmptyActionTextExclude(tvI, tvC, tvH, tvI);
+            if (slot != null) {
+                setFoldTextOnSlot(slot);
+                logMarkOnce(id, "mark use empty slot(h0)");
+                return true;
+            }
             TextView mark = newFoldMark(actionRow, tvI);
             if (addMarkBeforeAnchor(actionRow, tvI, mark)) {
                 logMarkOnce(id, "mark before viewConv(h0)");
@@ -325,6 +331,12 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             }
             return false;
         } else if (tvH != null && containsText(tvH, "查看对话")) {
+            TextView slot = pickEmptyActionTextExclude(tvH, tvC, tvI, tvH);
+            if (slot != null) {
+                setFoldTextOnSlot(slot);
+                logMarkOnce(id, "mark use empty slot(h0)");
+                return true;
+            }
             TextView mark = newFoldMark(actionRow, tvH);
             if (addMarkBeforeAnchor(actionRow, tvH, mark)) {
                 logMarkOnce(id, "mark before viewConv(h0)");
@@ -374,6 +386,12 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         }
         TextView viewConv = findTextViewContains(actionRow, "查看对话");
         if (viewConv != null) {
+            TextView emptySlot = pickEmptyActionTextExclude(viewConv, actionRow);
+            if (emptySlot != null) {
+                setFoldTextOnSlot(emptySlot);
+                logMarkOnce(id, "mark use empty slot(fallback)");
+                return true;
+            }
             TextView mark = newFoldMark(actionRow, viewConv);
             if (addMarkBeforeAnchor(actionRow, viewConv, mark)) {
                 logMarkOnce(id, "mark before viewConv (fallback)");
@@ -476,6 +494,20 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         return null;
     }
 
+    private static TextView pickEmptyActionTextExclude(TextView exclude, TextView... tvs) {
+        if (tvs == null) return null;
+        for (TextView tv : tvs) {
+            if (tv == null || tv == exclude) continue;
+            if (!hasText(tv)) return tv;
+        }
+        for (TextView tv : tvs) {
+            if (tv == null || tv == exclude) continue;
+            int vis = tv.getVisibility();
+            if (vis != View.VISIBLE) return tv;
+        }
+        return null;
+    }
+
     private static TextView pickEmptyActionText(ViewGroup group) {
         if (group == null) return null;
         List<TextView> candidates = new ArrayList<>();
@@ -484,6 +516,22 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             if (!hasText(tv)) return tv;
         }
         for (TextView tv : candidates) {
+            int vis = tv.getVisibility();
+            if (vis != View.VISIBLE) return tv;
+        }
+        return null;
+    }
+
+    private static TextView pickEmptyActionTextExclude(TextView exclude, ViewGroup group) {
+        if (group == null) return null;
+        List<TextView> candidates = new ArrayList<>();
+        collectTextViews(group, candidates);
+        for (TextView tv : candidates) {
+            if (tv == exclude) continue;
+            if (!hasText(tv)) return tv;
+        }
+        for (TextView tv : candidates) {
+            if (tv == exclude) continue;
             int vis = tv.getVisibility();
             if (vis != View.VISIBLE) return tv;
         }
