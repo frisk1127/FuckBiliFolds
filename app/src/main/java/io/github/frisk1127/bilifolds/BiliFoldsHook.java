@@ -556,7 +556,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             out.add(item);
         }
         if (!changed) return null;
-        List<Object> resorted = reorderCommentsByTime(out, desc);
+        List<Object> resorted = reorderCommentsByTime(out);
         if (resorted != null) return resorted;
         return out;
     }
@@ -1674,19 +1674,12 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         return null;
     }
 
-    private static boolean shouldSortByTime() {
-        int mode = getSortModeValue(LAST_SORT_MODE);
-        if (mode == Integer.MIN_VALUE) return true;
-        return mode == 0;
-    }
-
     private static boolean isSortableCommentItem(Object item) {
         return isCommentItem(item) && getCreateTime(item) > 0;
     }
 
-    private static List<Object> reorderCommentsByTime(List<Object> list, Boolean desc) {
+    private static List<Object> reorderCommentsByTime(List<Object> list) {
         if (list == null || list.size() < 2) return null;
-        if (!shouldSortByTime()) return null;
         ArrayList<Object> comments = new ArrayList<>();
         ArrayList<Long> original = new ArrayList<>();
         for (Object item : list) {
@@ -1695,18 +1688,17 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             original.add(getId(item));
         }
         if (comments.size() < 2) return null;
-        final boolean descOrder = desc == null ? false : desc;
         Collections.sort(comments, new Comparator<Object>() {
             @Override
             public int compare(Object o1, Object o2) {
                 long t1 = getCreateTime(o1);
                 long t2 = getCreateTime(o2);
                 if (t1 != t2) {
-                    return descOrder ? Long.compare(t2, t1) : Long.compare(t1, t2);
+                    return Long.compare(t1, t2);
                 }
                 long id1 = getId(o1);
                 long id2 = getId(o2);
-                return descOrder ? Long.compare(id2, id1) : Long.compare(id1, id2);
+                return Long.compare(id1, id2);
             }
         });
         ArrayList<Long> sorted = new ArrayList<>(comments.size());
