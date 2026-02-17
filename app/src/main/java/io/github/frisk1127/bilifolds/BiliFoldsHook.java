@@ -390,7 +390,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         }
         cacheFoldReplies(list);
         ArrayList<Object> bucket = new ArrayList<>(list.size());
-        long finalRootId = rootId;
+        long finalRootId = 0L;
         for (Object o : list) {
             if (o == null || !isCommentItem(o)) continue;
             long id = getId(o);
