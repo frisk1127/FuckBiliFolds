@@ -390,21 +390,25 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         }
         cacheFoldReplies(list);
         ArrayList<Object> bucket = new ArrayList<>(list.size());
-        long rootId = 0L;
+        long finalRootId = rootId;
         for (Object o : list) {
             if (o == null || !isCommentItem(o)) continue;
+            long id = getId(o);
+            long root = getRootId(o);
+            if (finalRootId == 0L) {
+                if (root != 0L) finalRootId = root;
+                else if (id != 0L) finalRootId = id;
+            }
+            if (finalRootId != 0L) {
+                if (id == finalRootId) continue;
+                if (root != 0L && root != finalRootId) continue;
+            }
             forceUnfold(o);
             bucket.add(o);
-            if (rootId == 0L) {
-                rootId = getRootId(o);
-            }
         }
         if (bucket.isEmpty()) return;
         for (Object o : bucket) {
             long id = getId(o);
-            if (rootId != 0L && id == rootId) {
-                continue;
-            }
             if (id != 0) {
                 FOLDED_IDS.put(id, Boolean.TRUE);
             }
@@ -420,10 +424,10 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         }
         ArrayList<Object> existing = FOLD_CACHE_BY_OFFSET.computeIfAbsent(key, k -> new ArrayList<>());
         mergeUniqueById(existing, bucket);
-        if (rootId != 0L) {
-            ArrayList<Object> byRoot = FOLD_CACHE.computeIfAbsent(rootId, k -> new ArrayList<>());
+        if (finalRootId != 0L) {
+            ArrayList<Object> byRoot = FOLD_CACHE.computeIfAbsent(finalRootId, k -> new ArrayList<>());
             mergeUniqueById(byRoot, bucket);
-            OFFSET_TO_ROOT.put(realOffset, rootId);
+            OFFSET_TO_ROOT.put(realOffset, finalRootId);
         }
         tryUpdateCommentAdapterList(realOffset);
     }
