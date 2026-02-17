@@ -47,6 +47,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
     private static final ConcurrentHashMap<String, Long> OFFSET_TO_ROOT = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<String, Boolean> AUTO_FETCHING = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<Long, Boolean> FOLDED_IDS = new ConcurrentHashMap<>();
+    private static final String FOLD_MARK_TEXT = "已展开";
     private static final ConcurrentHashMap<Long, Boolean> DEBUG_FOLD_LOGGED = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<String, Integer> OFFSET_INSERT_INDEX = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<String, Boolean> SUBJECT_HAS_FOLD = new ConcurrentHashMap<>();
@@ -290,8 +291,10 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
 
     private static void applyFoldMarkToView(View root) {
         if (root == null) return;
+        removeFoldMark(root);
         TextView viewConv = findTextViewContains(root, "查看对话");
         if (viewConv != null) {
+            stripFoldSuffix(viewConv);
             View parent = (View) viewConv.getParent();
             if (parent instanceof ViewGroup) {
                 ViewGroup group = (ViewGroup) parent;
@@ -305,7 +308,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             appendFoldToText(viewConv);
             return;
         }
-        TextView reply = findTextViewContains(root, "回复");
+        TextView reply = findTextViewExactClickable(root, "回复");
         if (reply == null) return;
         View parent = (View) reply.getParent();
         if (!(parent instanceof ViewGroup)) return;
@@ -320,17 +323,12 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         removeFoldMark(root);
         TextView viewConv = findTextViewContains(root, "查看对话");
         if (viewConv == null) return;
-        CharSequence cur = viewConv.getText();
-        if (cur == null) return;
-        String s = cur.toString();
-        if (!s.contains("折叠")) return;
-        String cleaned = s.replace(" · 折叠", "").replace("折叠", "");
-        viewConv.setText(cleaned.trim());
+        stripFoldSuffix(viewConv);
     }
 
     private static TextView newFoldMark(ViewGroup group, TextView base) {
         TextView mark = new TextView(group.getContext());
-        mark.setText("折叠");
+        mark.setText(FOLD_MARK_TEXT);
         if (base != null) {
             mark.setTextColor(base.getCurrentTextColor());
             mark.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX, base.getTextSize());
@@ -345,9 +343,21 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         if (tv == null) return;
         CharSequence cur = tv.getText();
         String s = cur == null ? "" : cur.toString();
-        if (!s.contains("折叠")) {
-            tv.setText(s + " · 折叠");
+        if (!s.contains(FOLD_MARK_TEXT)) {
+            tv.setText(s + " · " + FOLD_MARK_TEXT);
         }
+    }
+
+    private static void stripFoldSuffix(TextView tv) {
+        if (tv == null) return;
+        CharSequence cur = tv.getText();
+        if (cur == null) return;
+        String s = cur.toString();
+        if (!(s.contains(FOLD_MARK_TEXT) || s.contains("折叠"))) return;
+        String cleaned = s;
+        cleaned = cleaned.replace(" · " + FOLD_MARK_TEXT, "").replace(FOLD_MARK_TEXT, "");
+        cleaned = cleaned.replace(" · 折叠", "").replace("折叠", "");
+        tv.setText(cleaned.trim());
     }
 
     private static boolean hasFoldMark(ViewGroup group) {
@@ -358,7 +368,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             if (tag != null && "BiliFoldsMark".equals(tag)) return true;
             if (v instanceof TextView) {
                 CharSequence t = ((TextView) v).getText();
-                if (t != null && t.toString().contains("折叠")) return true;
+                if (t != null && t.toString().contains(FOLD_MARK_TEXT)) return true;
             }
         }
         return false;
@@ -376,6 +386,28 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             for (int i = 0; i < group.getChildCount(); i++) {
                 View v = group.getChildAt(i);
                 TextView tv = findTextViewContains(v, text);
+                if (tv != null) return tv;
+            }
+        }
+        return null;
+    }
+
+    private static TextView findTextViewExactClickable(View root, String text) {
+        if (root instanceof TextView) {
+            CharSequence t = ((TextView) root).getText();
+            if (t != null && t.toString().trim().equals(text)) {
+                boolean clickable = root.isClickable();
+                if (!clickable && root.getParent() instanceof View) {
+                    clickable = ((View) root.getParent()).isClickable();
+                }
+                if (clickable) return (TextView) root;
+            }
+        }
+        if (root instanceof ViewGroup) {
+            ViewGroup group = (ViewGroup) root;
+            for (int i = 0; i < group.getChildCount(); i++) {
+                View v = group.getChildAt(i);
+                TextView tv = findTextViewExactClickable(v, text);
                 if (tv != null) return tv;
             }
         }
@@ -468,15 +500,6 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             bucket.add(o);
         }
         if (bucket.isEmpty()) return;
-        for (Object o : bucket) {
-            long id = getId(o);
-            if (rootId != 0L && id == rootId) {
-                continue;
-            }
-            if (id != 0) {
-                FOLDED_IDS.put(id, Boolean.TRUE);
-            }
-        }
         String realOffset = offset != null ? offset : extractOffsetFromObj(obj);
         if (realOffset == null) {
             return;
