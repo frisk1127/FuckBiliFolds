@@ -364,13 +364,8 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         TextView viewConv = findTextViewContains(actionRow, "查看对话");
         if (viewConv != null) {
             stripFoldSuffix(viewConv);
-            if (!hasFoldMark(actionRow)) {
-                TextView mark = newFoldMark(actionRow, viewConv);
-                if (addMarkAfterAnchor(actionRow, viewConv, mark)) {
-                    logMarkOnce(id, "mark after viewConv (fallback)");
-                    return true;
-                }
-            }
+            appendFoldToText(viewConv);
+            logMarkOnce(id, "mark append viewConv (fallback)");
             return true;
         }
         View anchor = findActionAnchor(actionRow);
