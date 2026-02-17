@@ -318,37 +318,19 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         TextView tvC = getBindingTextView(binding, "c", "f400668c");
         TextView anchor = null;
         if (tvI != null && containsText(tvI, "查看对话")) {
-            TextView slot = pickEmptyActionTextExclude(tvI, tvC, tvH, tvI);
-            if (slot != null) {
-                setFoldTextOnSlot(slot);
-                logMarkOnce(id, "mark use empty slot(h0)");
-                return true;
-            }
             TextView mark = newFoldMark(actionRow, tvI);
-            if (addMarkBeforeAnchor(actionRow, tvI, mark)) {
-                logMarkOnce(id, "mark before viewConv(h0)");
+            if (addMarkAbsolute(actionRow, tvI, mark)) {
+                logMarkOnce(id, "mark abs viewConv(h0)");
                 return true;
             }
             return false;
         } else if (tvH != null && containsText(tvH, "查看对话")) {
-            TextView slot = pickEmptyActionTextExclude(tvH, tvC, tvI, tvH);
-            if (slot != null) {
-                setFoldTextOnSlot(slot);
-                logMarkOnce(id, "mark use empty slot(h0)");
-                return true;
-            }
             TextView mark = newFoldMark(actionRow, tvH);
-            if (addMarkBeforeAnchor(actionRow, tvH, mark)) {
-                logMarkOnce(id, "mark before viewConv(h0)");
+            if (addMarkAbsolute(actionRow, tvH, mark)) {
+                logMarkOnce(id, "mark abs viewConv(h0)");
                 return true;
             }
             return false;
-        }
-        TextView emptySlot = pickEmptyActionText(tvI, tvH, tvC);
-        if (emptySlot != null) {
-            setFoldTextOnSlot(emptySlot);
-            logMarkOnce(id, "mark use empty slot(h0)");
-            return true;
         }
         if (tvI != null && hasText(tvI)) {
             anchor = tvI;
@@ -370,8 +352,8 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         }
         if (hasFoldMark(actionRow)) return true;
         TextView mark = newFoldMark(actionRow, anchor);
-        if (addMarkAfterAnchor(actionRow, anchor, mark)) {
-            logMarkOnce(id, "mark after h0 anchor");
+        if (addMarkAbsolute(actionRow, anchor, mark)) {
+            logMarkOnce(id, "mark abs anchor(h0)");
             return true;
         }
         return false;
@@ -384,25 +366,14 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             logMarkOnce(id, "mark skip: no action row (fallback)");
             return false;
         }
+        removeFoldMark(actionRow);
         TextView viewConv = findTextViewContains(actionRow, "查看对话");
         if (viewConv != null) {
-            TextView emptySlot = pickEmptyActionTextExclude(viewConv, actionRow);
-            if (emptySlot != null) {
-                setFoldTextOnSlot(emptySlot);
-                logMarkOnce(id, "mark use empty slot(fallback)");
-                return true;
-            }
             TextView mark = newFoldMark(actionRow, viewConv);
-            if (addMarkBeforeAnchor(actionRow, viewConv, mark)) {
-                logMarkOnce(id, "mark before viewConv (fallback)");
+            if (addMarkAbsolute(actionRow, viewConv, mark)) {
+                logMarkOnce(id, "mark abs viewConv (fallback)");
                 return true;
             }
-            return false;
-        }
-        TextView emptySlot = pickEmptyActionText(actionRow);
-        if (emptySlot != null) {
-            setFoldTextOnSlot(emptySlot);
-            logMarkOnce(id, "mark use empty slot(fallback)");
             return true;
         }
         View anchor = findActionAnchor(actionRow);
@@ -414,8 +385,8 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         if (hasFoldMark(actionRow)) return true;
         TextView base = (anchor instanceof TextView) ? (TextView) anchor : findFirstTextView(actionRow);
         TextView mark = newFoldMark(actionRow, base);
-        if (addMarkAfterAnchor(actionRow, anchor, mark)) {
-            logMarkOnce(id, "mark after anchor (fallback)");
+        if (addMarkAbsolute(actionRow, anchor, mark)) {
+            logMarkOnce(id, "mark abs anchor (fallback)");
             return true;
         }
         return false;
@@ -480,64 +451,6 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         }
     }
 
-    private static TextView pickEmptyActionText(TextView... tvs) {
-        if (tvs == null) return null;
-        for (TextView tv : tvs) {
-            if (tv == null) continue;
-            if (!hasText(tv)) return tv;
-        }
-        for (TextView tv : tvs) {
-            if (tv == null) continue;
-            int vis = tv.getVisibility();
-            if (vis != View.VISIBLE) return tv;
-        }
-        return null;
-    }
-
-    private static TextView pickEmptyActionTextExclude(TextView exclude, TextView... tvs) {
-        if (tvs == null) return null;
-        for (TextView tv : tvs) {
-            if (tv == null || tv == exclude) continue;
-            if (!hasText(tv)) return tv;
-        }
-        for (TextView tv : tvs) {
-            if (tv == null || tv == exclude) continue;
-            int vis = tv.getVisibility();
-            if (vis != View.VISIBLE) return tv;
-        }
-        return null;
-    }
-
-    private static TextView pickEmptyActionText(ViewGroup group) {
-        if (group == null) return null;
-        List<TextView> candidates = new ArrayList<>();
-        collectTextViews(group, candidates);
-        for (TextView tv : candidates) {
-            if (!hasText(tv)) return tv;
-        }
-        for (TextView tv : candidates) {
-            int vis = tv.getVisibility();
-            if (vis != View.VISIBLE) return tv;
-        }
-        return null;
-    }
-
-    private static TextView pickEmptyActionTextExclude(TextView exclude, ViewGroup group) {
-        if (group == null) return null;
-        List<TextView> candidates = new ArrayList<>();
-        collectTextViews(group, candidates);
-        for (TextView tv : candidates) {
-            if (tv == exclude) continue;
-            if (!hasText(tv)) return tv;
-        }
-        for (TextView tv : candidates) {
-            if (tv == exclude) continue;
-            int vis = tv.getVisibility();
-            if (vis != View.VISIBLE) return tv;
-        }
-        return null;
-    }
-
     private static void collectTextViews(View root, List<TextView> out) {
         if (root == null || out == null) return;
         if (root instanceof TextView) {
@@ -552,12 +465,6 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         }
     }
 
-    private static void setFoldTextOnSlot(TextView tv) {
-        if (tv == null) return;
-        stripFoldSuffix(tv);
-        tv.setText(FOLD_MARK_TEXT);
-        tv.setVisibility(View.VISIBLE);
-    }
 
     private static void logMarkOnce(long id, String msg) {
         if (id == 0L || msg == null) return;
@@ -668,36 +575,64 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         return true;
     }
 
-    private static boolean addMarkBeforeAnchor(ViewGroup group, View anchor, TextView mark) {
+    private static boolean addMarkAbsolute(final ViewGroup group, final View anchor, final TextView mark) {
         if (group == null || anchor == null || mark == null) return false;
+        ViewGroup.LayoutParams lp;
         if (group instanceof androidx.constraintlayout.widget.ConstraintLayout) {
-            if (anchor.getId() == View.NO_ID) {
-                anchor.setId(View.generateViewId());
-            }
-            androidx.constraintlayout.widget.ConstraintLayout.LayoutParams lp =
-                    new androidx.constraintlayout.widget.ConstraintLayout.LayoutParams(
-                            ViewGroup.LayoutParams.WRAP_CONTENT,
-                            ViewGroup.LayoutParams.WRAP_CONTENT
-                    );
-            lp.startToStart = androidx.constraintlayout.widget.ConstraintLayout.LayoutParams.PARENT_ID;
-            lp.endToStart = anchor.getId();
-            lp.topToTop = anchor.getId();
-            lp.bottomToBottom = anchor.getId();
-            if (anchor instanceof TextView) {
-                lp.baselineToBaseline = anchor.getId();
-            }
-            lp.setMarginEnd(dp(group.getContext(), 6));
-            lp.horizontalBias = 1.0f;
-            mark.setLayoutParams(lp);
-            mark.setId(View.generateViewId());
-            group.addView(mark);
-            return true;
+            lp = new androidx.constraintlayout.widget.ConstraintLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT
+            );
+        } else {
+            lp = new ViewGroup.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT
+            );
         }
-        int index = group.indexOfChild(anchor);
-        if (index < 0) index = 0;
-        group.addView(mark, Math.max(0, index));
+        mark.setLayoutParams(lp);
+        mark.setId(View.generateViewId());
+        group.addView(mark);
+        mark.post(new Runnable() {
+            @Override
+            public void run() {
+                positionMarkAbsolute(group, anchor, mark);
+            }
+        });
         return true;
     }
+
+    private static void positionMarkAbsolute(ViewGroup group, View anchor, TextView mark) {
+        if (group == null || anchor == null || mark == null) return;
+        int groupW = group.getWidth();
+        int groupH = group.getHeight();
+        if (groupW <= 0 || groupH <= 0) return;
+        int markW = mark.getWidth();
+        int markH = mark.getHeight();
+        if (markW <= 0 || markH <= 0) {
+            int wSpec = View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED);
+            int hSpec = View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED);
+            mark.measure(wSpec, hSpec);
+            markW = mark.getMeasuredWidth();
+            markH = mark.getMeasuredHeight();
+        }
+        int[] gp = new int[2];
+        int[] ap = new int[2];
+        group.getLocationOnScreen(gp);
+        anchor.getLocationOnScreen(ap);
+        float anchorX = ap[0] - gp[0];
+        float anchorY = ap[1] - gp[1];
+        float x = anchorX + anchor.getWidth() + dp(group.getContext(), 6);
+        if (x + markW > groupW) {
+            x = anchorX - markW - dp(group.getContext(), 6);
+        }
+        if (x < 0) x = 0;
+        float y = anchorY + (anchor.getHeight() - markH) / 2.0f;
+        if (y < 0) y = 0;
+        if (y + markH > groupH) y = Math.max(0, groupH - markH);
+        mark.setX(x);
+        mark.setY(y);
+    }
+
 
     private static int dp(android.content.Context ctx, int dp) {
         if (ctx == null) return dp;
