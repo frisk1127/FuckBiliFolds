@@ -292,12 +292,13 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
     private static void applyFoldMarkToView(View root) {
         if (root == null) return;
         removeFoldMark(root);
-        TextView viewConv = findTextViewContains(root, "查看对话");
+        TextView viewConv = findTextViewClickableContains(root, "查看对话");
         if (viewConv != null) {
             stripFoldSuffix(viewConv);
             View parent = (View) viewConv.getParent();
             if (parent instanceof ViewGroup) {
                 ViewGroup group = (ViewGroup) parent;
+                if (!isLikelyActionRow(group)) return;
                 if (hasFoldMark(group)) return;
                 TextView mark = newFoldMark(group, viewConv);
                 int index = group.indexOfChild(viewConv);
@@ -313,6 +314,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         View parent = (View) reply.getParent();
         if (!(parent instanceof ViewGroup)) return;
         ViewGroup group = (ViewGroup) parent;
+        if (!isLikelyActionRow(group)) return;
         if (hasFoldMark(group)) return;
         TextView mark = newFoldMark(group, reply);
         group.addView(mark, group.getChildCount());
@@ -368,7 +370,9 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             if (tag != null && "BiliFoldsMark".equals(tag)) return true;
             if (v instanceof TextView) {
                 CharSequence t = ((TextView) v).getText();
-                if (t != null && t.toString().contains(FOLD_MARK_TEXT)) return true;
+                if (t != null && (t.toString().contains(FOLD_MARK_TEXT) || t.toString().contains("折叠"))) {
+                    return true;
+                }
             }
         }
         return false;
@@ -386,6 +390,28 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             for (int i = 0; i < group.getChildCount(); i++) {
                 View v = group.getChildAt(i);
                 TextView tv = findTextViewContains(v, text);
+                if (tv != null) return tv;
+            }
+        }
+        return null;
+    }
+
+    private static TextView findTextViewClickableContains(View root, String text) {
+        if (root instanceof TextView) {
+            CharSequence t = ((TextView) root).getText();
+            if (t != null && t.toString().contains(text)) {
+                boolean clickable = root.isClickable();
+                if (!clickable && root.getParent() instanceof View) {
+                    clickable = ((View) root.getParent()).isClickable();
+                }
+                if (clickable) return (TextView) root;
+            }
+        }
+        if (root instanceof ViewGroup) {
+            ViewGroup group = (ViewGroup) root;
+            for (int i = 0; i < group.getChildCount(); i++) {
+                View v = group.getChildAt(i);
+                TextView tv = findTextViewClickableContains(v, text);
                 if (tv != null) return tv;
             }
         }
@@ -412,6 +438,23 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             }
         }
         return null;
+    }
+
+    private static boolean isLikelyActionRow(ViewGroup group) {
+        if (group instanceof android.widget.LinearLayout) {
+            android.widget.LinearLayout ll = (android.widget.LinearLayout) group;
+            if (ll.getOrientation() == android.widget.LinearLayout.HORIZONTAL) return true;
+        }
+        int clickable = 0;
+        for (int i = 0; i < group.getChildCount(); i++) {
+            View v = group.getChildAt(i);
+            if (v == null) continue;
+            if (v.isClickable()) clickable++;
+        }
+        if (clickable >= 1 && group.getChildCount() <= 8) return true;
+        if (findTextViewExactClickable(group, "回复") != null) return true;
+        if (findTextViewClickableContains(group, "查看对话") != null) return true;
+        return false;
     }
 
     private static void removeFoldMark(View root) {
