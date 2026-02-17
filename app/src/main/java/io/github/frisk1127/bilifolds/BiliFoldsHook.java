@@ -59,6 +59,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
     private static volatile String LAST_EXTRA = null;
     private static volatile Object LAST_SORT_MODE = null;
     private static volatile WeakReference<Object> LAST_COMMENT_ADAPTER = new WeakReference<>(null);
+    private static volatile Field COMMENT_ID_FIELD = null;
     private static final ThreadLocal<Boolean> RESUBMITTING = new ThreadLocal<>();
     private static volatile android.os.Handler MAIN_HANDLER = null;
     private static volatile ClassLoader APP_CL = null;
@@ -188,7 +189,12 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         XposedBridge.hookAllConstructors(c, new XC_MethodHook() {
             @Override
             protected void afterHookedMethod(MethodHookParam param) {
-                LAST_COMMENT_ADAPTER = new WeakReference<>(param.thisObject);
+                Object adapter = param.thisObject;
+                Object last = LAST_COMMENT_ADAPTER == null ? null : LAST_COMMENT_ADAPTER.get();
+                if (last == null || last != adapter) {
+                    clearFoldCaches();
+                }
+                LAST_COMMENT_ADAPTER = new WeakReference<>(adapter);
             }
         });
         XposedBridge.hookAllMethods(c, "b1", new XC_MethodHook() {
@@ -502,12 +508,6 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                     out.add(o);
                     if (id != 0) existingIds.add(id);
                 }
-                if (offset != null && !offset.isEmpty()) {
-                    FOLD_CACHE_BY_OFFSET.remove(offset);
-                }
-                if (rootId > 0) {
-                    FOLD_CACHE.remove(rootId);
-                }
                 changed = true;
                 continue;
             }
@@ -546,7 +546,6 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             }
             if (inserted > 0) {
                 changed = true;
-                FOLD_CACHE_BY_OFFSET.remove(key);
                 OFFSET_INSERT_INDEX.remove(key);
             }
         }
@@ -1144,7 +1143,64 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             if (v instanceof Long) return (Long) v;
         } catch (Throwable ignored) {
         }
+        if (COMMENT_ID_FIELD != null) {
+            try {
+                COMMENT_ID_FIELD.setAccessible(true);
+                Object v = COMMENT_ID_FIELD.get(item);
+                if (v instanceof Number) {
+                    long id = ((Number) v).longValue();
+                    if (id > 0) return id;
+                }
+            } catch (Throwable ignored) {
+            }
+        }
+        findCommentIdField(item);
+        if (COMMENT_ID_FIELD != null) {
+            try {
+                COMMENT_ID_FIELD.setAccessible(true);
+                Object v = COMMENT_ID_FIELD.get(item);
+                if (v instanceof Number) {
+                    long id = ((Number) v).longValue();
+                    if (id > 0) return id;
+                }
+            } catch (Throwable ignored) {
+            }
+        }
         return 0L;
+    }
+
+    private static void findCommentIdField(Object item) {
+        if (item == null || COMMENT_ID_FIELD != null) return;
+        Field bestField = null;
+        int bestScore = 0;
+        Field[] fields = item.getClass().getDeclaredFields();
+        for (Field f : fields) {
+            try {
+                f.setAccessible(true);
+                Object v = f.get(item);
+                if (!(v instanceof Number)) continue;
+                long id = ((Number) v).longValue();
+                if (id <= 0) continue;
+                if (id < 100_000_000L || id > 9_999_999_999_999L) {
+                    continue;
+                }
+                int score = 1;
+                String n = f.getName();
+                if (n != null) {
+                    String s = n.toLowerCase();
+                    if (s.contains("rpid") || s.contains("reply") || s.contains("id")) score += 3;
+                    if (s.contains("root") || s.contains("parent")) score += 1;
+                }
+                if (score > bestScore) {
+                    bestScore = score;
+                    bestField = f;
+                }
+            } catch (Throwable ignored) {
+            }
+        }
+        if (bestField != null) {
+            COMMENT_ID_FIELD = bestField;
+        }
     }
 
     private static long getRootId(Object item) {
