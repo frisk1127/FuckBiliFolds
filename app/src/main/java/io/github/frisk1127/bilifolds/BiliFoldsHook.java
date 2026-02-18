@@ -327,15 +327,15 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             TextView mark = newFoldMark(markRoot, tvI);
             setMarkId(mark, id);
             View more = findMoreActionView(actionRow);
-            if (more != null && addMarkBeforeView(actionRow, more, mark, tvI)) {
+            View like = findLikeActionView(actionRow);
+            if (more != null && addOverlayMarkLeftOf(actionRow, more, mark)) {
                 logMarkMoreOnce(id, actionRow, more, tvI, "h0.viewConv");
-                logMarkOnce(id, "mark add before more viewConv(h0)");
+                logMarkOnce(id, "mark overlay left of more viewConv(h0)");
                 return true;
             }
-            View like = findLikeActionView(actionRow);
-            if (like != null && addMarkBeforeView(actionRow, like, mark, tvI)) {
+            if (like != null && addOverlayMarkLeftOf(actionRow, like, mark)) {
                 logMarkMoreOnce(id, actionRow, like, tvI, "h0.like");
-                logMarkOnce(id, "mark add before like viewConv(h0)");
+                logMarkOnce(id, "mark overlay left of like viewConv(h0)");
                 return true;
             }
             if (addMarkAfterAnchor(actionRow, tvI, mark)) {
@@ -351,15 +351,15 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             TextView mark = newFoldMark(markRoot, tvH);
             setMarkId(mark, id);
             View more = findMoreActionView(actionRow);
-            if (more != null && addMarkBeforeView(actionRow, more, mark, tvH)) {
+            View like = findLikeActionView(actionRow);
+            if (more != null && addOverlayMarkLeftOf(actionRow, more, mark)) {
                 logMarkMoreOnce(id, actionRow, more, tvH, "h0.viewConv");
-                logMarkOnce(id, "mark add before more viewConv(h0)");
+                logMarkOnce(id, "mark overlay left of more viewConv(h0)");
                 return true;
             }
-            View like = findLikeActionView(actionRow);
-            if (like != null && addMarkBeforeView(actionRow, like, mark, tvH)) {
+            if (like != null && addOverlayMarkLeftOf(actionRow, like, mark)) {
                 logMarkMoreOnce(id, actionRow, like, tvH, "h0.like");
-                logMarkOnce(id, "mark add before like viewConv(h0)");
+                logMarkOnce(id, "mark overlay left of like viewConv(h0)");
                 return true;
             }
             if (addMarkAfterAnchor(actionRow, tvH, mark)) {
@@ -400,15 +400,15 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         TextView mark = newFoldMark(markRoot, base);
         setMarkId(mark, id);
         View more = findMoreActionView(actionRow);
-        if (more != null && addMarkBeforeView(actionRow, more, mark, base)) {
+        View like = findLikeActionView(actionRow);
+        if (more != null && addOverlayMarkLeftOf(actionRow, more, mark)) {
             logMarkMoreOnce(id, actionRow, more, base, "h0.anchor");
-            logMarkOnce(id, "mark add before more(h0)");
+            logMarkOnce(id, "mark overlay left of more(h0)");
             return true;
         }
-        View like = findLikeActionView(actionRow);
-        if (like != null && addMarkBeforeView(actionRow, like, mark, base)) {
+        if (like != null && addOverlayMarkLeftOf(actionRow, like, mark)) {
             logMarkMoreOnce(id, actionRow, like, base, "h0.like");
-            logMarkOnce(id, "mark add before like(h0)");
+            logMarkOnce(id, "mark overlay left of like(h0)");
             return true;
         }
         if (addMarkAfterAnchor(actionRow, anchor, mark)) {
@@ -436,15 +436,15 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             TextView mark = newFoldMark(markRoot, viewConv);
             setMarkId(mark, id);
             View more = findMoreActionView(actionRow);
-            if (more != null && addMarkBeforeView(actionRow, more, mark, viewConv)) {
+            View like = findLikeActionView(actionRow);
+            if (more != null && addOverlayMarkLeftOf(actionRow, more, mark)) {
                 logMarkMoreOnce(id, actionRow, more, viewConv, "fallback.viewConv");
-                logMarkOnce(id, "mark add before more viewConv (fallback)");
+                logMarkOnce(id, "mark overlay left of more viewConv (fallback)");
                 return true;
             }
-            View like = findLikeActionView(actionRow);
-            if (like != null && addMarkBeforeView(actionRow, like, mark, viewConv)) {
+            if (like != null && addOverlayMarkLeftOf(actionRow, like, mark)) {
                 logMarkMoreOnce(id, actionRow, like, viewConv, "fallback.like");
-                logMarkOnce(id, "mark add before like viewConv (fallback)");
+                logMarkOnce(id, "mark overlay left of like viewConv (fallback)");
                 return true;
             }
             if (addMarkAfterAnchor(actionRow, viewConv, mark)) {
@@ -473,15 +473,15 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         TextView mark = newFoldMark(markRoot, base);
         setMarkId(mark, id);
         View more = findMoreActionView(actionRow);
-        if (more != null && addMarkBeforeView(actionRow, more, mark, base)) {
+        View like = findLikeActionView(actionRow);
+        if (more != null && addOverlayMarkLeftOf(actionRow, more, mark)) {
             logMarkMoreOnce(id, actionRow, more, base, "fallback.anchor");
-            logMarkOnce(id, "mark add before more (fallback)");
+            logMarkOnce(id, "mark overlay left of more (fallback)");
             return true;
         }
-        View like = findLikeActionView(actionRow);
-        if (like != null && addMarkBeforeView(actionRow, like, mark, base)) {
+        if (like != null && addOverlayMarkLeftOf(actionRow, like, mark)) {
             logMarkMoreOnce(id, actionRow, like, base, "fallback.like");
-            logMarkOnce(id, "mark add before like (fallback)");
+            logMarkOnce(id, "mark overlay left of like (fallback)");
             return true;
         }
         if (addMarkAfterAnchor(actionRow, anchor, mark)) {
@@ -894,6 +894,90 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             }
         });
         return true;
+    }
+
+    private static boolean addOverlayMarkLeftOf(final ViewGroup host, final View target, final TextView mark) {
+        if (host == null || target == null || mark == null) return false;
+        try {
+            Object old = XposedHelpers.getAdditionalInstanceField(host, "BiliFoldsOverlayMark");
+            if (old instanceof View) {
+                try {
+                    android.view.ViewOverlay ov = host.getOverlay();
+                    if (ov instanceof android.view.ViewGroupOverlay) {
+                        ((android.view.ViewGroupOverlay) ov).remove((View) old);
+                    }
+                } catch (Throwable ignored) {
+                }
+            }
+        } catch (Throwable ignored) {
+        }
+        mark.setLayoutParams(new ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+        ));
+        mark.setId(View.generateViewId());
+        host.post(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    android.view.ViewOverlay ov = host.getOverlay();
+                    if (ov instanceof android.view.ViewGroupOverlay) {
+                        ((android.view.ViewGroupOverlay) ov).add(mark);
+                    }
+                } catch (Throwable ignored) {
+                }
+                try {
+                    XposedHelpers.setAdditionalInstanceField(host, "BiliFoldsOverlayMark", mark);
+                } catch (Throwable ignored) {
+                }
+                positionOverlayLeftOf(host, target, mark);
+            }
+        });
+        return true;
+    }
+
+    private static void positionOverlayLeftOf(ViewGroup host, View target, TextView mark) {
+        if (host == null || target == null || mark == null) return;
+        int hostW = host.getWidth();
+        int hostH = host.getHeight();
+        if (hostW <= 0 || hostH <= 0) return;
+        int markW = mark.getWidth();
+        int markH = mark.getHeight();
+        if (markW <= 0 || markH <= 0) {
+            int wSpec = View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED);
+            int hSpec = View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED);
+            mark.measure(wSpec, hSpec);
+            markW = mark.getMeasuredWidth();
+            markH = mark.getMeasuredHeight();
+        }
+        int[] hp = new int[2];
+        int[] tp = new int[2];
+        host.getLocationOnScreen(hp);
+        target.getLocationOnScreen(tp);
+        float targetX = tp[0] - hp[0];
+        float targetY = tp[1] - hp[1];
+        float x = targetX - markW - dp(host.getContext(), 6);
+        if (x < 0) x = 0;
+        float y = targetY + (target.getHeight() - markH) / 2.0f;
+        if (y < 0) y = 0;
+        if (y + markH > hostH) y = Math.max(0, hostH - markH);
+        long id = 0L;
+        try {
+            Object v = XposedHelpers.getAdditionalInstanceField(mark, "BiliFoldsId");
+            if (v instanceof Number) id = ((Number) v).longValue();
+        } catch (Throwable ignored) {
+        }
+        int l = Math.round(x);
+        int t = Math.round(y);
+        if (DEBUG_MARK_POS_LOGGED.putIfAbsent(id, Boolean.TRUE) == null) {
+            log("mark.pos2 id=" + id
+                    + " host=" + hostW + "x" + hostH
+                    + " target=" + target.getWidth() + "x" + target.getHeight()
+                    + " targetCls=" + target.getClass().getSimpleName()
+                    + " mark=" + markW + "x" + markH
+                    + " x=" + l + " y=" + t);
+        }
+        mark.layout(l, t, l + markW, t + markH);
     }
 
     private static void positionOverlayMark(ViewGroup host, View anchor, TextView mark) {
