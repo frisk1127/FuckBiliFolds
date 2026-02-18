@@ -906,16 +906,35 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                     XposedHelpers.setAdditionalInstanceField(host, "BiliFoldsOverlayMark", mark);
                 } catch (Throwable ignored) {
                 }
-                positionOverlayLeftOf(host, target, mark);
+                positionOverlayLeftOfWithRetry(host, target, mark, 0);
             }
         }, 80);
         return true;
     }
 
+    private static void positionOverlayLeftOfWithRetry(final ViewGroup host, final View target, final TextView mark, final int attempt) {
+        if (host == null || target == null || mark == null) return;
+        if (target.getWidth() > 0 && target.getHeight() > 0) {
+            positionOverlayLeftOf(host, target, mark);
+            return;
+        }
+        if (attempt >= 5) {
+            View resolved = resolveAnchorView(target);
+            if (resolved != null) {
+                positionOverlayLeftOf(host, resolved, mark);
+            }
+            return;
+        }
+        host.postDelayed(new Runnable() {
+            @Override
+            public void run() {
+                positionOverlayLeftOfWithRetry(host, target, mark, attempt + 1);
+            }
+        }, 60);
+    }
+
     private static void positionOverlayLeftOf(ViewGroup host, View target, TextView mark) {
         if (host == null || target == null || mark == null) return;
-        View resolved = resolveAnchorView(target);
-        if (resolved != null) target = resolved;
         int hostW = host.getWidth();
         int hostH = host.getHeight();
         if (hostW <= 0 || hostH <= 0) return;
@@ -992,16 +1011,35 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                     XposedHelpers.setAdditionalInstanceField(host, "BiliFoldsOverlayMark", mark);
                 } catch (Throwable ignored) {
                 }
-                positionOverlayRightOf(host, target, mark);
+                positionOverlayRightOfWithRetry(host, target, mark, 0);
             }
         }, 80);
         return true;
     }
 
+    private static void positionOverlayRightOfWithRetry(final ViewGroup host, final View target, final TextView mark, final int attempt) {
+        if (host == null || target == null || mark == null) return;
+        if (target.getWidth() > 0 && target.getHeight() > 0) {
+            positionOverlayRightOf(host, target, mark);
+            return;
+        }
+        if (attempt >= 5) {
+            View resolved = resolveAnchorView(target);
+            if (resolved != null) {
+                positionOverlayRightOf(host, resolved, mark);
+            }
+            return;
+        }
+        host.postDelayed(new Runnable() {
+            @Override
+            public void run() {
+                positionOverlayRightOfWithRetry(host, target, mark, attempt + 1);
+            }
+        }, 60);
+    }
+
     private static void positionOverlayRightOf(ViewGroup host, View target, TextView mark) {
         if (host == null || target == null || mark == null) return;
-        View resolved = resolveAnchorView(target);
-        if (resolved != null) target = resolved;
         int hostW = host.getWidth();
         int hostH = host.getHeight();
         if (hostW <= 0 || hostH <= 0) return;
