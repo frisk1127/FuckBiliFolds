@@ -374,6 +374,10 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         TextView base = (anchor instanceof TextView) ? (TextView) anchor : findFirstTextView(actionRow);
         TextView mark = newFoldMark(markRoot, base);
         setMarkId(mark, id);
+        if (addMarkAtRowEnd(actionRow, base, mark)) {
+            logMarkOnce(id, "mark add end(h0)");
+            return true;
+        }
         if (addMarkAfterAnchor(actionRow, anchor, mark)) {
             logMarkOnce(id, "mark add anchor(h0)");
             return true;
@@ -423,6 +427,10 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         TextView base = (anchor instanceof TextView) ? (TextView) anchor : findFirstTextView(actionRow);
         TextView mark = newFoldMark(markRoot, base);
         setMarkId(mark, id);
+        if (addMarkAtRowEnd(actionRow, base, mark)) {
+            logMarkOnce(id, "mark add end (fallback)");
+            return true;
+        }
         if (addMarkAfterAnchor(actionRow, anchor, mark)) {
             logMarkOnce(id, "mark add anchor (fallback)");
             return true;
@@ -637,6 +645,49 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         if (index < 0) index = group.getChildCount();
         group.addView(mark, Math.min(index + 1, group.getChildCount()));
         return true;
+    }
+
+    private static boolean addMarkAtRowEnd(ViewGroup group, TextView base, TextView mark) {
+        if (group == null || mark == null) return false;
+        if (group instanceof androidx.constraintlayout.widget.ConstraintLayout) {
+            if (group.getId() == View.NO_ID) {
+                group.setId(View.generateViewId());
+            }
+            if (base != null && base.getId() == View.NO_ID) {
+                base.setId(View.generateViewId());
+            }
+            androidx.constraintlayout.widget.ConstraintLayout.LayoutParams lp =
+                    new androidx.constraintlayout.widget.ConstraintLayout.LayoutParams(
+                            ViewGroup.LayoutParams.WRAP_CONTENT,
+                            ViewGroup.LayoutParams.WRAP_CONTENT
+                    );
+            lp.endToEnd = group.getId();
+            lp.topToTop = group.getId();
+            lp.bottomToBottom = group.getId();
+            if (base != null) {
+                lp.baselineToBaseline = base.getId();
+            }
+            lp.setMarginEnd(dp(group.getContext(), 6));
+            mark.setLayoutParams(lp);
+            mark.setId(View.generateViewId());
+            group.addView(mark);
+            return true;
+        }
+        if (group instanceof android.widget.LinearLayout) {
+            android.widget.LinearLayout ll = (android.widget.LinearLayout) group;
+            if (ll.getOrientation() == android.widget.LinearLayout.HORIZONTAL) {
+                android.widget.LinearLayout.LayoutParams lp =
+                        new android.widget.LinearLayout.LayoutParams(
+                                ViewGroup.LayoutParams.WRAP_CONTENT,
+                                ViewGroup.LayoutParams.WRAP_CONTENT
+                        );
+                lp.leftMargin = dp(group.getContext(), 6);
+                mark.setLayoutParams(lp);
+                group.addView(mark);
+                return true;
+            }
+        }
+        return false;
     }
 
     private static boolean addOverlayMark(final ViewGroup host, final View anchor, final TextView mark) {
