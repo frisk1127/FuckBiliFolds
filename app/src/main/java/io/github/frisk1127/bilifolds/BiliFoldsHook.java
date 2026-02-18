@@ -35,7 +35,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             "com.bilibili.app.dev"
     );
 
-    private static final String FOLD_TAG_TEXT = "??";
+    private static final String FOLD_TAG_TEXT = "\u5df2\u5c55\u5f00";
     private static final String FOLD_TAG_TEXT_COLOR_DAY = "#FF888888";
     private static final String FOLD_TAG_TEXT_COLOR_NIGHT = "#FFAAAAAA";
     private static final String FOLD_TAG_BG_DAY = "#00000000";
@@ -47,7 +47,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
     private static final ConcurrentHashMap<String, Long> OFFSET_TO_ROOT = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<String, Boolean> AUTO_FETCHING = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<Long, Boolean> FOLDED_IDS = new ConcurrentHashMap<>();
-    private static final String FOLD_MARK_TEXT = "???";
+    private static final String FOLD_MARK_TEXT = "\u5df2\u5c55\u5f00";
     private static final ConcurrentHashMap<Long, Boolean> DEBUG_FOLD_LOGGED = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<String, Integer> OFFSET_INSERT_INDEX = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<String, Boolean> SUBJECT_HAS_FOLD = new ConcurrentHashMap<>();
@@ -57,7 +57,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
     private static final ConcurrentHashMap<Long, Boolean> DEBUG_MARK_POS_LOGGED = new ConcurrentHashMap<>();
     private static final Set<Object> AUTO_EXPAND_ZIP = java.util.Collections.newSetFromMap(new java.util.WeakHashMap<Object, Boolean>());
 
-    private static final String AUTO_EXPAND_TEXT = "?????????";
+    private static final String AUTO_EXPAND_TEXT = "\u5df2\u81ea\u52a8\u5c55\u5f00\u6298\u53e0\u8bc4\u8bba";
 
     private static final ConcurrentHashMap<String, AtomicInteger> FOOTER_RETRY_COUNT = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<String, Boolean> FOOTER_RETRY_PENDING = new ConcurrentHashMap<>();
@@ -321,7 +321,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         TextView tvH = getBindingTextView(binding, "h", "f400673h");
         TextView tvC = getBindingTextView(binding, "c", "f400668c");
         TextView anchor = null;
-        if (tvI != null && containsText(tvI, "????")) {
+        if (tvI != null && containsText(tvI, "\u67e5\u770b\u5bf9\u8bdd")) {
             TextView mark = newFoldMark(markRoot, tvI);
             setMarkId(mark, id);
             if (addOverlayMark(markRoot, tvI, mark)) {
@@ -329,7 +329,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                 return true;
             }
             return false;
-        } else if (tvH != null && containsText(tvH, "????")) {
+        } else if (tvH != null && containsText(tvH, "\u67e5\u770b\u5bf9\u8bdd")) {
             TextView mark = newFoldMark(markRoot, tvH);
             setMarkId(mark, id);
             if (addOverlayMark(markRoot, tvH, mark)) {
@@ -375,7 +375,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         }
         ViewGroup markRoot = (root instanceof ViewGroup) ? (ViewGroup) root : actionRow;
         removeFoldMark(markRoot);
-        TextView viewConv = findTextViewContains(actionRow, "????");
+        TextView viewConv = findTextViewContains(actionRow, "\u67e5\u770b\u5bf9\u8bdd");
         if (viewConv != null) {
             TextView mark = newFoldMark(markRoot, viewConv);
             setMarkId(mark, id);
@@ -437,7 +437,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         CharSequence cur = tv.getText();
         String s = cur == null ? "" : cur.toString();
         if (!s.contains(FOLD_MARK_TEXT)) {
-            tv.setText(s + " ? " + FOLD_MARK_TEXT);
+            tv.setText(s + " \u00b7 " + FOLD_MARK_TEXT);
         }
     }
 
@@ -446,10 +446,10 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         CharSequence cur = tv.getText();
         if (cur == null) return;
         String s = cur.toString();
-        if (!(s.contains(FOLD_MARK_TEXT) || s.contains("??"))) return;
+        if (!(s.contains(FOLD_MARK_TEXT) || s.contains("\u5df2\u5c55\u5f00"))) return;
         String cleaned = s;
-        cleaned = cleaned.replace(" ? " + FOLD_MARK_TEXT, "").replace(FOLD_MARK_TEXT, "");
-        cleaned = cleaned.replace(" ? ??", "").replace("??", "");
+        cleaned = cleaned.replace(" \u00b7 " + FOLD_MARK_TEXT, "").replace(FOLD_MARK_TEXT, "");
+        cleaned = cleaned.replace(" \u00b7 \u5df2\u5c55\u5f00", "").replace("\u5df2\u5c55\u5f00", "");
         String result = cleaned.trim();
         tv.setText(result);
         if (result.isEmpty()) {
@@ -514,14 +514,20 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
     }
 
     private static View findActionAnchor(ViewGroup actionRow) {
-        TextView viewConv = findTextViewContains(actionRow, "????");
+        TextView viewConv = findTextViewContains(actionRow, "\u67e5\u770b\u5bf9\u8bdd");
         if (viewConv != null) {
             stripFoldSuffix(viewConv);
             return viewConv;
         }
-        TextView reply = findTextViewContains(actionRow, "??");
+        TextView reply = findTextViewContains(actionRow, "\u56de\u590d");
         if (reply != null) return reply;
-        View byDesc = findViewByDescContains(actionRow, new String[]{"??", "??", "??", "??"});
+        View byDesc = findViewByDescContains(actionRow, new String[]{
+                "\u56de\u590d",
+                "\u8bc4\u8bba",
+                "\u70b9\u8d5e",
+                "\u70b9\u8e29",
+                "\u66f4\u591a"
+        });
         if (byDesc != null) return byDesc;
         return null;
     }
@@ -901,12 +907,19 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             if (v instanceof android.widget.ImageView) image++;
             if (v.isClickable()) clickable++;
             CharSequence desc = v.getContentDescription();
-            if (desc != null && containsAny(desc.toString(), new String[]{"?", "?", "??", "??", "??", "??", "??", "??"})) {
+            if (desc != null && containsAny(desc.toString(), new String[]{
+                    "\u56de\u590d",
+                    "\u8bc4\u8bba",
+                    "\u70b9\u8d5e",
+                    "\u70b9\u8e29",
+                    "\u66f4\u591a",
+                    "\u67e5\u770b\u5bf9\u8bdd"
+            })) {
                 keyword += 2;
             }
             if (v instanceof TextView) {
                 CharSequence t = ((TextView) v).getText();
-                if (t != null && (t.toString().contains("????") || "??".equals(t.toString().trim()))) {
+                if (t != null && (t.toString().contains("\u67e5\u770b\u5bf9\u8bdd") || "\u56de\u590d".equals(t.toString().trim()))) {
                     keyword += 3;
                 }
             }
@@ -1281,7 +1294,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             if (item != null && "vv.r1".equals(item.getClass().getName())) {
                 String text = callStringMethod(item, "h");
                 String offset = getZipCardOffset(item);
-                if ((text != null && (text.contains("??") || text.contains("??"))) ||
+                if ((text != null && (text.contains("\u5c55\u5f00\u66f4\u591a\u8bc4\u8bba") || text.contains("\u5c55\u5f00\u66f4\u591a"))) ||
                         (offset != null && !offset.isEmpty())) {
                     log("skip r1 non-zip text=" + text + " offset=" + offset + " tag=" + tag);
                 }
@@ -1448,7 +1461,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                 seenR1++;
                 String text = callStringMethod(item, "h");
                 String offset = getZipCardOffset(item);
-                if ((text != null && (text.contains("??") || text.contains("??"))) ||
+                if ((text != null && (text.contains("\u5c55\u5f00\u66f4\u591a\u8bc4\u8bba") || text.contains("\u5c55\u5f00\u66f4\u591a"))) ||
                         (offset != null && !offset.isEmpty())) {
                     log("prefetch r1 idx=" + i + " text=" + text + " offset=" + offset);
                 }
@@ -2285,10 +2298,11 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         String text = callStringMethod(item, "h");
         if (text != null) {
             String t = text.trim();
-            if (t.contains("???") || t.contains("????")) return false;
-            if (t.contains("??") || t.contains("??")) return true;
-            String offset = getZipCardOffset(item);
-            return offset != null && !offset.isEmpty();
+            if (t.contains("\u5c55\u5f00\u66f4\u591a\u8bc4\u8bba")
+                    || t.contains("\u5c55\u5f00\u66f4\u591a")
+                    || t.contains("\u67e5\u770b\u66f4\u591a")) {
+                return true;
+            }
         }
         String offset = getZipCardOffset(item);
         return offset != null && !offset.isEmpty();
@@ -2695,7 +2709,10 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         String text = callStringMethod(item, "h");
         if (text == null) return false;
         String t = text.trim();
-        return t.contains("???") || t.contains("????") || t.contains("????") || t.contains("???");
+        return t.contains("\u518d\u600e\u4e48\u627e\u4e5f\u6ca1\u6709")
+                || t.contains("\u6ca1\u6709\u66f4\u591a\u8bc4\u8bba")
+                || t.contains("\u6ca1\u6709\u66f4\u591a\u4e86")
+                || t.contains("\u8fd9\u91cc\u662f\u8bc4\u8bba\u533a");
     }
 
     private static void postToMain(Runnable r) {
