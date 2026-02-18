@@ -668,6 +668,10 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             if (inside >= 0 && inside + markW <= hostW) {
                 x = inside;
             }
+            float fixedRight = hostW - markW - dp(host.getContext(), 16);
+            if (fixedRight > 0) {
+                x = fixedRight;
+            }
         }
         if (x < 0) x = 0;
         float y = anchorY + (anchor.getHeight() - markH) / 2.0f;
