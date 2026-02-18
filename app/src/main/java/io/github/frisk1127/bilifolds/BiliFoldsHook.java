@@ -413,6 +413,8 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         mark.setTag("BiliFoldsMark");
         mark.setClickable(false);
         mark.setFocusable(false);
+        mark.setVisibility(View.VISIBLE);
+        mark.setAlpha(1.0f);
         return mark;
     }
 
@@ -594,6 +596,10 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             }
         } catch (Throwable ignored) {
         }
+        mark.setLayoutParams(new ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+        ));
         mark.setId(View.generateViewId());
         android.view.ViewOverlay ov = host.getOverlay();
         if (ov instanceof android.view.ViewGroupOverlay) {
@@ -640,8 +646,9 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         float y = anchorY + (anchor.getHeight() - markH) / 2.0f;
         if (y < 0) y = 0;
         if (y + markH > hostH) y = Math.max(0, hostH - markH);
-        mark.setX(x);
-        mark.setY(y);
+        int l = Math.round(x);
+        int t = Math.round(y);
+        mark.layout(l, t, l + markW, t + markH);
     }
 
 
