@@ -54,6 +54,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
     private static final ConcurrentHashMap<String, Boolean> SUBJECT_EXPANDED = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<Long, Boolean> DEBUG_MARK_LOGGED = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<Long, Boolean> DEBUG_MARK_DETAIL_LOGGED = new ConcurrentHashMap<>();
+    private static final ConcurrentHashMap<Long, Boolean> DEBUG_MARK_POS_LOGGED = new ConcurrentHashMap<>();
     private static final Set<Object> AUTO_EXPAND_ZIP = java.util.Collections.newSetFromMap(new java.util.WeakHashMap<Object, Boolean>());
 
     private static final String AUTO_EXPAND_TEXT = "已自动展开折叠评论";
@@ -322,6 +323,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         TextView anchor = null;
         if (tvI != null && containsText(tvI, "查看对话")) {
             TextView mark = newFoldMark(markRoot, tvI);
+            setMarkId(mark, id);
             if (addOverlayMark(markRoot, tvI, mark)) {
                 logMarkOnce(id, "mark overlay viewConv(h0)");
                 return true;
@@ -329,6 +331,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             return false;
         } else if (tvH != null && containsText(tvH, "查看对话")) {
             TextView mark = newFoldMark(markRoot, tvH);
+            setMarkId(mark, id);
             if (addOverlayMark(markRoot, tvH, mark)) {
                 logMarkOnce(id, "mark overlay viewConv(h0)");
                 return true;
@@ -355,6 +358,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         }
         if (hasFoldMark(markRoot)) return true;
         TextView mark = newFoldMark(markRoot, anchor);
+        setMarkId(mark, id);
         if (addOverlayMark(markRoot, anchor, mark)) {
             logMarkOnce(id, "mark overlay anchor(h0)");
             return true;
@@ -374,6 +378,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         TextView viewConv = findTextViewContains(actionRow, "查看对话");
         if (viewConv != null) {
             TextView mark = newFoldMark(markRoot, viewConv);
+            setMarkId(mark, id);
             if (addOverlayMark(markRoot, viewConv, mark)) {
                 logMarkOnce(id, "mark overlay viewConv (fallback)");
                 return true;
@@ -389,6 +394,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         if (hasFoldMark(markRoot)) return true;
         TextView base = (anchor instanceof TextView) ? (TextView) anchor : findFirstTextView(actionRow);
         TextView mark = newFoldMark(markRoot, base);
+        setMarkId(mark, id);
         if (addOverlayMark(markRoot, anchor, mark)) {
             logMarkOnce(id, "mark overlay anchor (fallback)");
             return true;
@@ -415,7 +421,18 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         mark.setFocusable(false);
         mark.setVisibility(View.VISIBLE);
         mark.setAlpha(1.0f);
+        // DEBUG: 高对比度，确认 overlay 是否渲染
+        mark.setTextColor(0xFFFFFFFF);
+        mark.setBackgroundColor(0xAAFF0000);
         return mark;
+    }
+
+    private static void setMarkId(TextView mark, long id) {
+        if (mark == null || id == 0L) return;
+        try {
+            XposedHelpers.setAdditionalInstanceField(mark, "BiliFoldsId", id);
+        } catch (Throwable ignored) {
+        }
     }
 
     private static void appendFoldToText(TextView tv) {
@@ -649,8 +666,24 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         float y = anchorY + (anchor.getHeight() - markH) / 2.0f;
         if (y < 0) y = 0;
         if (y + markH > hostH) y = Math.max(0, hostH - markH);
+        long id = 0L;
+        try {
+            Object v = XposedHelpers.getAdditionalInstanceField(mark, "BiliFoldsId");
+            if (v instanceof Number) id = ((Number) v).longValue();
+        } catch (Throwable ignored) {
+        }
         int l = Math.round(x);
         int t = Math.round(y);
+        // DEBUG: 强制固定位置，验证 overlay 是否可见（确认后可删）
+        l = dp(host.getContext(), 8);
+        t = dp(host.getContext(), 8);
+        if (DEBUG_MARK_POS_LOGGED.putIfAbsent(id, Boolean.TRUE) == null) {
+            log("mark.pos id=" + id
+                    + " host=" + hostW + "x" + hostH
+                    + " anchor=" + anchor.getWidth() + "x" + anchor.getHeight()
+                    + " mark=" + markW + "x" + markH
+                    + " x=" + l + " y=" + t);
+        }
         mark.layout(l, t, l + markW, t + markH);
     }
 
