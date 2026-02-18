@@ -892,7 +892,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                 ViewGroup.LayoutParams.WRAP_CONTENT
         ));
         mark.setId(View.generateViewId());
-        host.post(new Runnable() {
+        host.postDelayed(new Runnable() {
             @Override
             public void run() {
                 try {
@@ -908,12 +908,14 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                 }
                 positionOverlayLeftOf(host, target, mark);
             }
-        });
+        }, 80);
         return true;
     }
 
     private static void positionOverlayLeftOf(ViewGroup host, View target, TextView mark) {
         if (host == null || target == null || mark == null) return;
+        View resolved = resolveAnchorView(target);
+        if (resolved != null) target = resolved;
         int hostW = host.getWidth();
         int hostH = host.getHeight();
         if (hostW <= 0 || hostH <= 0) return;
@@ -976,7 +978,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                 ViewGroup.LayoutParams.WRAP_CONTENT
         ));
         mark.setId(View.generateViewId());
-        host.post(new Runnable() {
+        host.postDelayed(new Runnable() {
             @Override
             public void run() {
                 try {
@@ -992,12 +994,14 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                 }
                 positionOverlayRightOf(host, target, mark);
             }
-        });
+        }, 80);
         return true;
     }
 
     private static void positionOverlayRightOf(ViewGroup host, View target, TextView mark) {
         if (host == null || target == null || mark == null) return;
+        View resolved = resolveAnchorView(target);
+        if (resolved != null) target = resolved;
         int hostW = host.getWidth();
         int hostH = host.getHeight();
         if (hostW <= 0 || hostH <= 0) return;
