@@ -325,8 +325,9 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         if (tvI != null && containsText(tvI, "\u67e5\u770b\u5bf9\u8bdd")) {
             TextView mark = newFoldMark(markRoot, tvI);
             setMarkId(mark, id);
-            if (addMarkAtRowEnd(actionRow, tvI, mark)) {
-                logMarkOnce(id, "mark add end viewConv(h0)");
+            View more = findMoreActionView(actionRow);
+            if (more != null && addMarkBeforeView(actionRow, more, mark, tvI)) {
+                logMarkOnce(id, "mark add before more viewConv(h0)");
                 return true;
             }
             if (addMarkAfterAnchor(actionRow, tvI, mark)) {
@@ -341,8 +342,9 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         } else if (tvH != null && containsText(tvH, "\u67e5\u770b\u5bf9\u8bdd")) {
             TextView mark = newFoldMark(markRoot, tvH);
             setMarkId(mark, id);
-            if (addMarkAtRowEnd(actionRow, tvH, mark)) {
-                logMarkOnce(id, "mark add end viewConv(h0)");
+            View more = findMoreActionView(actionRow);
+            if (more != null && addMarkBeforeView(actionRow, more, mark, tvH)) {
+                logMarkOnce(id, "mark add before more viewConv(h0)");
                 return true;
             }
             if (addMarkAfterAnchor(actionRow, tvH, mark)) {
@@ -382,8 +384,9 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         TextView base = (anchor instanceof TextView) ? (TextView) anchor : findFirstTextView(actionRow);
         TextView mark = newFoldMark(markRoot, base);
         setMarkId(mark, id);
-        if (addMarkAtRowEnd(actionRow, base, mark)) {
-            logMarkOnce(id, "mark add end(h0)");
+        View more = findMoreActionView(actionRow);
+        if (more != null && addMarkBeforeView(actionRow, more, mark, base)) {
+            logMarkOnce(id, "mark add before more(h0)");
             return true;
         }
         if (addMarkAfterAnchor(actionRow, anchor, mark)) {
@@ -410,8 +413,9 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         if (viewConv != null) {
             TextView mark = newFoldMark(markRoot, viewConv);
             setMarkId(mark, id);
-            if (addMarkAtRowEnd(actionRow, viewConv, mark)) {
-                logMarkOnce(id, "mark add end viewConv (fallback)");
+            View more = findMoreActionView(actionRow);
+            if (more != null && addMarkBeforeView(actionRow, more, mark, viewConv)) {
+                logMarkOnce(id, "mark add before more viewConv (fallback)");
                 return true;
             }
             if (addMarkAfterAnchor(actionRow, viewConv, mark)) {
@@ -439,8 +443,9 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         TextView base = (anchor instanceof TextView) ? (TextView) anchor : findFirstTextView(actionRow);
         TextView mark = newFoldMark(markRoot, base);
         setMarkId(mark, id);
-        if (addMarkAtRowEnd(actionRow, base, mark)) {
-            logMarkOnce(id, "mark add end (fallback)");
+        View more = findMoreActionView(actionRow);
+        if (more != null && addMarkBeforeView(actionRow, more, mark, base)) {
+            logMarkOnce(id, "mark add before more (fallback)");
             return true;
         }
         if (addMarkAfterAnchor(actionRow, anchor, mark)) {
@@ -700,6 +705,83 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             }
         }
         return false;
+    }
+
+    private static boolean addMarkBeforeView(ViewGroup group, View before, TextView mark, TextView base) {
+        if (group == null || before == null || mark == null) return false;
+        if (group instanceof androidx.constraintlayout.widget.ConstraintLayout) {
+            if (group.getId() == View.NO_ID) {
+                group.setId(View.generateViewId());
+            }
+            if (before.getId() == View.NO_ID) {
+                before.setId(View.generateViewId());
+            }
+            if (base != null && base.getId() == View.NO_ID) {
+                base.setId(View.generateViewId());
+            }
+            androidx.constraintlayout.widget.ConstraintLayout.LayoutParams lp =
+                    new androidx.constraintlayout.widget.ConstraintLayout.LayoutParams(
+                            ViewGroup.LayoutParams.WRAP_CONTENT,
+                            ViewGroup.LayoutParams.WRAP_CONTENT
+                    );
+            lp.endToStart = before.getId();
+            lp.topToTop = group.getId();
+            lp.bottomToBottom = group.getId();
+            if (base != null) {
+                lp.baselineToBaseline = base.getId();
+            }
+            lp.setMarginEnd(dp(group.getContext(), 6));
+            mark.setLayoutParams(lp);
+            mark.setId(View.generateViewId());
+            group.addView(mark);
+            return true;
+        }
+        int index = group.indexOfChild(before);
+        if (index >= 0) {
+            mark.setLayoutParams(new ViewGroup.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT
+            ));
+            group.addView(mark, index);
+            return true;
+        }
+        return false;
+    }
+
+    private static View findMoreActionView(ViewGroup root) {
+        if (root == null) return null;
+        View v = findViewByDescContains(root, new String[]{
+                "\u66f4\u591a",
+                "\u66f4\u591a\u64cd\u4f5c",
+                "\u66f4\u591a\u8bc4\u8bba",
+                "\u66f4\u591a\u5185\u5bb9"
+        });
+        if (v != null) return v;
+        return findViewByIdNameContains(root, new String[]{"more", "menu", "overflow"});
+    }
+
+    private static View findViewByIdNameContains(View root, String[] keys) {
+        if (root == null || keys == null) return null;
+        int id = root.getId();
+        if (id != View.NO_ID) {
+            try {
+                String name = root.getResources().getResourceEntryName(id);
+                if (name != null) {
+                    for (String k : keys) {
+                        if (k != null && name.contains(k)) return root;
+                    }
+                }
+            } catch (Throwable ignored) {
+            }
+        }
+        if (root instanceof ViewGroup) {
+            ViewGroup group = (ViewGroup) root;
+            for (int i = 0; i < group.getChildCount(); i++) {
+                View v = findViewByIdNameContains(group.getChildAt(i), keys);
+                if (v != null) return v;
+            }
+        }
+        return null;
     }
 
     private static boolean addOverlayMark(final ViewGroup host, final View anchor, final TextView mark) {
