@@ -57,6 +57,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
     private static final ConcurrentHashMap<Long, Boolean> DEBUG_MARK_POS_LOGGED = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<Long, Boolean> DEBUG_MARK_PLACE_LOGGED = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<Long, Boolean> DEBUG_MARK_MORE_LOGGED = new ConcurrentHashMap<>();
+    private static final ConcurrentHashMap<Long, Boolean> DEBUG_MARK_POS3_LOGGED = new ConcurrentHashMap<>();
     private static final Set<Object> AUTO_EXPAND_ZIP = java.util.Collections.newSetFromMap(new java.util.WeakHashMap<Object, Boolean>());
 
     private static final String AUTO_EXPAND_TEXT = "\u5df2\u81ea\u52a8\u5c55\u5f00\u6298\u53e0\u8bc4\u8bba";
@@ -1028,13 +1029,15 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         }
         int l = Math.round(x);
         int t = Math.round(y);
-        if (DEBUG_MARK_POS_LOGGED.putIfAbsent(id, Boolean.TRUE) == null) {
+        if (DEBUG_MARK_POS3_LOGGED.putIfAbsent(id, Boolean.TRUE) == null) {
             log("mark.pos3 id=" + id
                     + " host=" + hostW + "x" + hostH
                     + " target=" + target.getWidth() + "x" + target.getHeight()
                     + " targetCls=" + target.getClass().getSimpleName()
                     + " mark=" + markW + "x" + markH
-                    + " x=" + l + " y=" + t);
+                    + " x=" + l + " y=" + t
+                    + " targetX=" + Math.round(targetX)
+                    + " targetY=" + Math.round(targetY));
         }
         mark.layout(l, t, l + markW, t + markH);
     }
