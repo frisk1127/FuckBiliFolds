@@ -325,9 +325,10 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         TextView tvC = getBindingTextView(binding, "c", "f400668c");
         TextView anchor = null;
         if (tvI != null && containsText(tvI, "\u67e5\u770b\u5bf9\u8bdd")) {
-            TextView mark = newFoldMark(markRoot, tvI);
+            ViewGroup anchorParent = (tvI.getParent() instanceof ViewGroup) ? (ViewGroup) tvI.getParent() : actionRow;
+            TextView mark = newFoldMark(anchorParent, tvI);
             setMarkId(mark, id);
-            if (addMarkAfterAnchor(actionRow, tvI, mark)) {
+            if (addMarkAfterAnchor(anchorParent, tvI, mark)) {
                 logMarkOnce(id, "mark add viewConv(h0)");
                 return true;
             }
@@ -337,9 +338,10 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             }
             return false;
         } else if (tvH != null && containsText(tvH, "\u67e5\u770b\u5bf9\u8bdd")) {
-            TextView mark = newFoldMark(markRoot, tvH);
+            ViewGroup anchorParent = (tvH.getParent() instanceof ViewGroup) ? (ViewGroup) tvH.getParent() : actionRow;
+            TextView mark = newFoldMark(anchorParent, tvH);
             setMarkId(mark, id);
-            if (addMarkAfterAnchor(actionRow, tvH, mark)) {
+            if (addMarkAfterAnchor(anchorParent, tvH, mark)) {
                 logMarkOnce(id, "mark add viewConv(h0)");
                 return true;
             }
@@ -373,21 +375,25 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                 + " rowCls=" + actionRow.getClass().getSimpleName()
                 + " child=" + actionRow.getChildCount());
         if (hasFoldMark(markRoot)) return true;
-        TextView base = (anchor instanceof TextView) ? (TextView) anchor : findFirstTextView(actionRow);
-        TextView mark = newFoldMark(markRoot, base);
+        ViewGroup anchorParent = (anchor.getParent() instanceof ViewGroup) ? (ViewGroup) anchor.getParent() : actionRow;
+        TextView base = (anchor instanceof TextView) ? (TextView) anchor : findFirstTextView(anchorParent);
+        TextView mark = newFoldMark(anchorParent, base);
         setMarkId(mark, id);
         View comment = findCommentActionView(actionRow);
-        if (comment != null && addMarkAfterAnchor(actionRow, comment, mark)) {
-            logMarkMoreOnce(id, actionRow, comment, base, "h0.comment");
-            logMarkOnce(id, "mark add after comment(h0)");
-            return true;
+        if (comment != null) {
+            ViewGroup commentParent = (comment.getParent() instanceof ViewGroup) ? (ViewGroup) comment.getParent() : actionRow;
+            if (addMarkAfterAnchor(commentParent, comment, mark)) {
+                logMarkMoreOnce(id, actionRow, comment, base, "h0.comment");
+                logMarkOnce(id, "mark add after comment(h0)");
+                return true;
+            }
         }
         if (comment != null && addOverlayMarkRightOf(actionRow, comment, mark)) {
             logMarkMoreOnce(id, actionRow, comment, base, "h0.comment");
             logMarkOnce(id, "mark overlay right of comment(h0)");
             return true;
         }
-        if (addMarkAfterAnchor(actionRow, anchor, mark)) {
+        if (addMarkAfterAnchor(anchorParent, anchor, mark)) {
             logMarkOnce(id, "mark add anchor(h0)");
             return true;
         }
@@ -409,9 +415,10 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         removeFoldMark(markRoot);
         TextView viewConv = findTextViewContains(actionRow, "\u67e5\u770b\u5bf9\u8bdd");
         if (viewConv != null) {
-            TextView mark = newFoldMark(markRoot, viewConv);
+            ViewGroup anchorParent = (viewConv.getParent() instanceof ViewGroup) ? (ViewGroup) viewConv.getParent() : actionRow;
+            TextView mark = newFoldMark(anchorParent, viewConv);
             setMarkId(mark, id);
-            if (addMarkAfterAnchor(actionRow, viewConv, mark)) {
+            if (addMarkAfterAnchor(anchorParent, viewConv, mark)) {
                 logMarkOnce(id, "mark add viewConv (fallback)");
                 return true;
             }
@@ -433,21 +440,25 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                 + " rowCls=" + actionRow.getClass().getSimpleName()
                 + " child=" + actionRow.getChildCount());
         if (hasFoldMark(markRoot)) return true;
-        TextView base = (anchor instanceof TextView) ? (TextView) anchor : findFirstTextView(actionRow);
-        TextView mark = newFoldMark(markRoot, base);
+        ViewGroup anchorParent = (anchor.getParent() instanceof ViewGroup) ? (ViewGroup) anchor.getParent() : actionRow;
+        TextView base = (anchor instanceof TextView) ? (TextView) anchor : findFirstTextView(anchorParent);
+        TextView mark = newFoldMark(anchorParent, base);
         setMarkId(mark, id);
         View comment = findCommentActionView(actionRow);
-        if (comment != null && addMarkAfterAnchor(actionRow, comment, mark)) {
-            logMarkMoreOnce(id, actionRow, comment, base, "fallback.comment");
-            logMarkOnce(id, "mark add after comment (fallback)");
-            return true;
+        if (comment != null) {
+            ViewGroup commentParent = (comment.getParent() instanceof ViewGroup) ? (ViewGroup) comment.getParent() : actionRow;
+            if (addMarkAfterAnchor(commentParent, comment, mark)) {
+                logMarkMoreOnce(id, actionRow, comment, base, "fallback.comment");
+                logMarkOnce(id, "mark add after comment (fallback)");
+                return true;
+            }
         }
         if (comment != null && addOverlayMarkRightOf(actionRow, comment, mark)) {
             logMarkMoreOnce(id, actionRow, comment, base, "fallback.comment");
             logMarkOnce(id, "mark overlay right of comment (fallback)");
             return true;
         }
-        if (addMarkAfterAnchor(actionRow, anchor, mark)) {
+        if (addMarkAfterAnchor(anchorParent, anchor, mark)) {
             logMarkOnce(id, "mark add anchor (fallback)");
             return true;
         }
