@@ -2287,7 +2287,8 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             String t = text.trim();
             if (t.contains("???") || t.contains("????")) return false;
             if (t.contains("??") || t.contains("??")) return true;
-            return false;
+            String offset = getZipCardOffset(item);
+            return offset != null && !offset.isEmpty();
         }
         String offset = getZipCardOffset(item);
         return offset != null && !offset.isEmpty();
