@@ -325,31 +325,13 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         TextView tvC = getBindingTextView(binding, "c", "f400668c");
         TextView anchor = null;
         if (tvI != null && containsText(tvI, "\u67e5\u770b\u5bf9\u8bdd")) {
-            ViewGroup anchorParent = (tvI.getParent() instanceof ViewGroup) ? (ViewGroup) tvI.getParent() : actionRow;
-            TextView mark = newFoldMark(anchorParent, tvI);
-            setMarkId(mark, id);
-            if (addMarkAfterAnchor(anchorParent, tvI, mark)) {
-                logMarkOnce(id, "mark add viewConv(h0)");
-                return true;
-            }
-            if (addOverlayMark(markRoot, tvI, mark)) {
-                logMarkOnce(id, "mark overlay viewConv(h0)");
-                return true;
-            }
-            return false;
+            appendFoldToText(tvI);
+            logMarkOnce(id, "mark append viewConv(h0)");
+            return true;
         } else if (tvH != null && containsText(tvH, "\u67e5\u770b\u5bf9\u8bdd")) {
-            ViewGroup anchorParent = (tvH.getParent() instanceof ViewGroup) ? (ViewGroup) tvH.getParent() : actionRow;
-            TextView mark = newFoldMark(anchorParent, tvH);
-            setMarkId(mark, id);
-            if (addMarkAfterAnchor(anchorParent, tvH, mark)) {
-                logMarkOnce(id, "mark add viewConv(h0)");
-                return true;
-            }
-            if (addOverlayMark(markRoot, tvH, mark)) {
-                logMarkOnce(id, "mark overlay viewConv(h0)");
-                return true;
-            }
-            return false;
+            appendFoldToText(tvH);
+            logMarkOnce(id, "mark append viewConv(h0)");
+            return true;
         }
         if (tvI != null && hasText(tvI)) {
             anchor = tvI;
@@ -375,24 +357,24 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                 + " rowCls=" + actionRow.getClass().getSimpleName()
                 + " child=" + actionRow.getChildCount());
         if (hasFoldMark(markRoot)) return true;
+        View comment = findCommentActionView(actionRow);
+        if (comment instanceof TextView) {
+            appendFoldToText((TextView) comment);
+            logMarkOnce(id, "mark append comment(h0)");
+            return true;
+        }
+        TextView count = findCommentCountTextView((comment != null && comment.getParent() instanceof ViewGroup)
+                ? (ViewGroup) comment.getParent()
+                : actionRow);
+        if (count != null) {
+            appendFoldToText(count);
+            logMarkOnce(id, "mark append count(h0)");
+            return true;
+        }
         ViewGroup anchorParent = (anchor.getParent() instanceof ViewGroup) ? (ViewGroup) anchor.getParent() : actionRow;
         TextView base = (anchor instanceof TextView) ? (TextView) anchor : findFirstTextView(anchorParent);
         TextView mark = newFoldMark(anchorParent, base);
         setMarkId(mark, id);
-        View comment = findCommentActionView(actionRow);
-        if (comment != null) {
-            ViewGroup commentParent = (comment.getParent() instanceof ViewGroup) ? (ViewGroup) comment.getParent() : actionRow;
-            if (addMarkAfterAnchor(commentParent, comment, mark)) {
-                logMarkMoreOnce(id, actionRow, comment, base, "h0.comment");
-                logMarkOnce(id, "mark add after comment(h0)");
-                return true;
-            }
-        }
-        if (comment != null && addOverlayMarkRightOf(actionRow, comment, mark)) {
-            logMarkMoreOnce(id, actionRow, comment, base, "h0.comment");
-            logMarkOnce(id, "mark overlay right of comment(h0)");
-            return true;
-        }
         if (addMarkAfterAnchor(anchorParent, anchor, mark)) {
             logMarkOnce(id, "mark add anchor(h0)");
             return true;
@@ -415,17 +397,8 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         removeFoldMark(markRoot);
         TextView viewConv = findTextViewContains(actionRow, "\u67e5\u770b\u5bf9\u8bdd");
         if (viewConv != null) {
-            ViewGroup anchorParent = (viewConv.getParent() instanceof ViewGroup) ? (ViewGroup) viewConv.getParent() : actionRow;
-            TextView mark = newFoldMark(anchorParent, viewConv);
-            setMarkId(mark, id);
-            if (addMarkAfterAnchor(anchorParent, viewConv, mark)) {
-                logMarkOnce(id, "mark add viewConv (fallback)");
-                return true;
-            }
-            if (addOverlayMark(markRoot, viewConv, mark)) {
-                logMarkOnce(id, "mark overlay viewConv (fallback)");
-                return true;
-            }
+            appendFoldToText(viewConv);
+            logMarkOnce(id, "mark append viewConv (fallback)");
             return true;
         }
         View anchor = findActionAnchor(actionRow);
@@ -440,24 +413,24 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                 + " rowCls=" + actionRow.getClass().getSimpleName()
                 + " child=" + actionRow.getChildCount());
         if (hasFoldMark(markRoot)) return true;
+        View comment = findCommentActionView(actionRow);
+        if (comment instanceof TextView) {
+            appendFoldToText((TextView) comment);
+            logMarkOnce(id, "mark append comment (fallback)");
+            return true;
+        }
+        TextView count = findCommentCountTextView((comment != null && comment.getParent() instanceof ViewGroup)
+                ? (ViewGroup) comment.getParent()
+                : actionRow);
+        if (count != null) {
+            appendFoldToText(count);
+            logMarkOnce(id, "mark append count (fallback)");
+            return true;
+        }
         ViewGroup anchorParent = (anchor.getParent() instanceof ViewGroup) ? (ViewGroup) anchor.getParent() : actionRow;
         TextView base = (anchor instanceof TextView) ? (TextView) anchor : findFirstTextView(anchorParent);
         TextView mark = newFoldMark(anchorParent, base);
         setMarkId(mark, id);
-        View comment = findCommentActionView(actionRow);
-        if (comment != null) {
-            ViewGroup commentParent = (comment.getParent() instanceof ViewGroup) ? (ViewGroup) comment.getParent() : actionRow;
-            if (addMarkAfterAnchor(commentParent, comment, mark)) {
-                logMarkMoreOnce(id, actionRow, comment, base, "fallback.comment");
-                logMarkOnce(id, "mark add after comment (fallback)");
-                return true;
-            }
-        }
-        if (comment != null && addOverlayMarkRightOf(actionRow, comment, mark)) {
-            logMarkMoreOnce(id, actionRow, comment, base, "fallback.comment");
-            logMarkOnce(id, "mark overlay right of comment (fallback)");
-            return true;
-        }
         if (addMarkAfterAnchor(anchorParent, anchor, mark)) {
             logMarkOnce(id, "mark add anchor (fallback)");
             return true;
@@ -1243,6 +1216,44 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             }
         }
         return null;
+    }
+
+    private static TextView findCommentCountTextView(View root) {
+        if (root instanceof TextView) {
+            CharSequence t = ((TextView) root).getText();
+            if (t != null && isCountText(t.toString())) {
+                return (TextView) root;
+            }
+        }
+        if (root instanceof ViewGroup) {
+            ViewGroup group = (ViewGroup) root;
+            for (int i = 0; i < group.getChildCount(); i++) {
+                TextView tv = findCommentCountTextView(group.getChildAt(i));
+                if (tv != null) return tv;
+            }
+        }
+        return null;
+    }
+
+    private static boolean isCountText(String s) {
+        if (s == null) return false;
+        String t = s.trim();
+        if (t.isEmpty()) return false;
+        int len = t.length();
+        if (len > 8) return false;
+        boolean hasDigit = false;
+        for (int i = 0; i < len; i++) {
+            char c = t.charAt(i);
+            if (c >= '0' && c <= '9') {
+                hasDigit = true;
+                continue;
+            }
+            if (c == 'w' || c == 'W' || c == 'k' || c == 'K' || c == '\u4e07') {
+                continue;
+            }
+            return false;
+        }
+        return hasDigit;
     }
 
     private static boolean hasFoldMark(ViewGroup group) {
