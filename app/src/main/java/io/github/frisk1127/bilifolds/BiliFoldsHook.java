@@ -637,6 +637,10 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
 
     private static void positionOverlayMark(ViewGroup host, View anchor, TextView mark) {
         if (host == null || anchor == null || mark == null) return;
+        View resolvedAnchor = resolveAnchorView(anchor);
+        if (resolvedAnchor != null) {
+            anchor = resolvedAnchor;
+        }
         int hostW = host.getWidth();
         int hostH = host.getHeight();
         if (hostW <= 0 || hostH <= 0) return;
@@ -659,6 +663,12 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         if (x + markW > hostW) {
             x = anchorX - markW - dp(host.getContext(), 6);
         }
+        if (anchor instanceof ViewGroup) {
+            float inside = anchorX + anchor.getWidth() - markW - dp(host.getContext(), 6);
+            if (inside >= 0 && inside + markW <= hostW) {
+                x = inside;
+            }
+        }
         if (x < 0) x = 0;
         float y = anchorY + (anchor.getHeight() - markH) / 2.0f;
         if (y < 0) y = 0;
@@ -675,10 +685,22 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             log("mark.pos id=" + id
                     + " host=" + hostW + "x" + hostH
                     + " anchor=" + anchor.getWidth() + "x" + anchor.getHeight()
+                    + " anchorCls=" + anchor.getClass().getSimpleName()
                     + " mark=" + markW + "x" + markH
                     + " x=" + l + " y=" + t);
         }
         mark.layout(l, t, l + markW, t + markH);
+    }
+
+    private static View resolveAnchorView(View anchor) {
+        if (anchor == null) return null;
+        if (anchor.getWidth() > 0 && anchor.getHeight() > 0) return anchor;
+        View cur = anchor;
+        while (cur != null && cur.getParent() instanceof View) {
+            cur = (View) cur.getParent();
+            if (cur.getWidth() > 0 && cur.getHeight() > 0) return cur;
+        }
+        return anchor;
     }
 
 
