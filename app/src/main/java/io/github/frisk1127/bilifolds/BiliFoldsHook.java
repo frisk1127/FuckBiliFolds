@@ -332,6 +332,12 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                 logMarkOnce(id, "mark add before more viewConv(h0)");
                 return true;
             }
+            View like = findLikeActionView(actionRow);
+            if (like != null && addMarkBeforeView(actionRow, like, mark, tvI)) {
+                logMarkMoreOnce(id, actionRow, like, tvI, "h0.like");
+                logMarkOnce(id, "mark add before like viewConv(h0)");
+                return true;
+            }
             if (addMarkAfterAnchor(actionRow, tvI, mark)) {
                 logMarkOnce(id, "mark add viewConv(h0)");
                 return true;
@@ -348,6 +354,12 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             if (more != null && addMarkBeforeView(actionRow, more, mark, tvH)) {
                 logMarkMoreOnce(id, actionRow, more, tvH, "h0.viewConv");
                 logMarkOnce(id, "mark add before more viewConv(h0)");
+                return true;
+            }
+            View like = findLikeActionView(actionRow);
+            if (like != null && addMarkBeforeView(actionRow, like, mark, tvH)) {
+                logMarkMoreOnce(id, actionRow, like, tvH, "h0.like");
+                logMarkOnce(id, "mark add before like viewConv(h0)");
                 return true;
             }
             if (addMarkAfterAnchor(actionRow, tvH, mark)) {
@@ -393,6 +405,12 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             logMarkOnce(id, "mark add before more(h0)");
             return true;
         }
+        View like = findLikeActionView(actionRow);
+        if (like != null && addMarkBeforeView(actionRow, like, mark, base)) {
+            logMarkMoreOnce(id, actionRow, like, base, "h0.like");
+            logMarkOnce(id, "mark add before like(h0)");
+            return true;
+        }
         if (addMarkAfterAnchor(actionRow, anchor, mark)) {
             logMarkOnce(id, "mark add anchor(h0)");
             return true;
@@ -421,6 +439,12 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             if (more != null && addMarkBeforeView(actionRow, more, mark, viewConv)) {
                 logMarkMoreOnce(id, actionRow, more, viewConv, "fallback.viewConv");
                 logMarkOnce(id, "mark add before more viewConv (fallback)");
+                return true;
+            }
+            View like = findLikeActionView(actionRow);
+            if (like != null && addMarkBeforeView(actionRow, like, mark, viewConv)) {
+                logMarkMoreOnce(id, actionRow, like, viewConv, "fallback.like");
+                logMarkOnce(id, "mark add before like viewConv (fallback)");
                 return true;
             }
             if (addMarkAfterAnchor(actionRow, viewConv, mark)) {
@@ -452,6 +476,12 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         if (more != null && addMarkBeforeView(actionRow, more, mark, base)) {
             logMarkMoreOnce(id, actionRow, more, base, "fallback.anchor");
             logMarkOnce(id, "mark add before more (fallback)");
+            return true;
+        }
+        View like = findLikeActionView(actionRow);
+        if (like != null && addMarkBeforeView(actionRow, like, mark, base)) {
+            logMarkMoreOnce(id, actionRow, like, base, "fallback.like");
+            logMarkOnce(id, "mark add before like (fallback)");
             return true;
         }
         if (addMarkAfterAnchor(actionRow, anchor, mark)) {
@@ -789,6 +819,17 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         });
         if (v != null) return v;
         return findViewByIdNameContains(root, new String[]{"more", "menu", "overflow"});
+    }
+
+    private static View findLikeActionView(ViewGroup root) {
+        if (root == null) return null;
+        View v = findViewByDescContains(root, new String[]{
+                "\u70b9\u8d5e",
+                "\u8d5e",
+                "\u559c\u6b22"
+        });
+        if (v != null) return v;
+        return findViewByIdNameContains(root, new String[]{"like", "thumb", "up"});
     }
 
     private static View findViewByIdNameContains(View root, String[] keys) {
