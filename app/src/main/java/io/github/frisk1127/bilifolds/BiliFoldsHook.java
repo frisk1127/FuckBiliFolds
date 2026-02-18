@@ -324,12 +324,9 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         TextView tvH = getBindingTextView(binding, "h", "f400673h");
         TextView tvC = getBindingTextView(binding, "c", "f400668c");
         TextView anchor = null;
-        if (tvI != null && containsText(tvI, "\u67e5\u770b\u5bf9\u8bdd")) {
-            appendFoldToText(tvI);
-            logMarkOnce(id, "mark append viewConv(h0)");
-            return true;
-        } else if (tvH != null && containsText(tvH, "\u67e5\u770b\u5bf9\u8bdd")) {
-            appendFoldToText(tvH);
+        TextView viewConv = findViewConvTextView(tvI, tvH, actionRow);
+        if (viewConv != null) {
+            appendFoldToText(viewConv);
             logMarkOnce(id, "mark append viewConv(h0)");
             return true;
         }
@@ -371,6 +368,12 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             logMarkOnce(id, "mark append count(h0)");
             return true;
         }
+        TextView any = findFirstTextView(actionRow);
+        if (any != null) {
+            appendFoldToText(any);
+            logMarkOnce(id, "mark append any(h0)");
+            return true;
+        }
         ViewGroup anchorParent = (anchor.getParent() instanceof ViewGroup) ? (ViewGroup) anchor.getParent() : actionRow;
         TextView base = (anchor instanceof TextView) ? (TextView) anchor : findFirstTextView(anchorParent);
         TextView mark = newFoldMark(anchorParent, base);
@@ -395,7 +398,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         }
         ViewGroup markRoot = actionRow;
         removeFoldMark(markRoot);
-        TextView viewConv = findTextViewContains(actionRow, "\u67e5\u770b\u5bf9\u8bdd");
+        TextView viewConv = findViewConvTextView(null, null, actionRow);
         if (viewConv != null) {
             appendFoldToText(viewConv);
             logMarkOnce(id, "mark append viewConv (fallback)");
@@ -425,6 +428,12 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         if (count != null) {
             appendFoldToText(count);
             logMarkOnce(id, "mark append count (fallback)");
+            return true;
+        }
+        TextView any = findFirstTextView(actionRow);
+        if (any != null) {
+            appendFoldToText(any);
+            logMarkOnce(id, "mark append any (fallback)");
             return true;
         }
         ViewGroup anchorParent = (anchor.getParent() instanceof ViewGroup) ? (ViewGroup) anchor.getParent() : actionRow;
@@ -1216,6 +1225,14 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             }
         }
         return null;
+    }
+
+    private static TextView findViewConvTextView(TextView tvI, TextView tvH, ViewGroup actionRow) {
+        if (tvI != null && containsText(tvI, "\u67e5\u770b\u5bf9\u8bdd")) return tvI;
+        if (tvH != null && containsText(tvH, "\u67e5\u770b\u5bf9\u8bdd")) return tvH;
+        TextView v = findTextViewContains(actionRow, "\u67e5\u770b\u5bf9\u8bdd");
+        if (v != null) return v;
+        return findTextViewContains(actionRow, "\u5bf9\u8bdd");
     }
 
     private static TextView findCommentCountTextView(View root) {
