@@ -315,7 +315,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         View root = getBindingRoot(binding);
         if (!(root instanceof ViewGroup)) return false;
         ViewGroup actionRow = (ViewGroup) root;
-        ViewGroup markRoot = (itemView instanceof ViewGroup) ? (ViewGroup) itemView : actionRow;
+        ViewGroup markRoot = actionRow;
         removeFoldMark(markRoot);
         TextView tvI = getBindingTextView(binding, "i", "f400674i");
         TextView tvH = getBindingTextView(binding, "h", "f400673h");
@@ -324,6 +324,10 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         if (tvI != null && containsText(tvI, "\u67e5\u770b\u5bf9\u8bdd")) {
             TextView mark = newFoldMark(markRoot, tvI);
             setMarkId(mark, id);
+            if (addMarkAfterAnchor(actionRow, tvI, mark)) {
+                logMarkOnce(id, "mark add viewConv(h0)");
+                return true;
+            }
             if (addOverlayMark(markRoot, tvI, mark)) {
                 logMarkOnce(id, "mark overlay viewConv(h0)");
                 return true;
@@ -332,6 +336,10 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         } else if (tvH != null && containsText(tvH, "\u67e5\u770b\u5bf9\u8bdd")) {
             TextView mark = newFoldMark(markRoot, tvH);
             setMarkId(mark, id);
+            if (addMarkAfterAnchor(actionRow, tvH, mark)) {
+                logMarkOnce(id, "mark add viewConv(h0)");
+                return true;
+            }
             if (addOverlayMark(markRoot, tvH, mark)) {
                 logMarkOnce(id, "mark overlay viewConv(h0)");
                 return true;
@@ -357,8 +365,13 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             return false;
         }
         if (hasFoldMark(markRoot)) return true;
-        TextView mark = newFoldMark(markRoot, anchor);
+        TextView base = (anchor instanceof TextView) ? (TextView) anchor : findFirstTextView(actionRow);
+        TextView mark = newFoldMark(markRoot, base);
         setMarkId(mark, id);
+        if (addMarkAfterAnchor(actionRow, anchor, mark)) {
+            logMarkOnce(id, "mark add anchor(h0)");
+            return true;
+        }
         if (addOverlayMark(markRoot, anchor, mark)) {
             logMarkOnce(id, "mark overlay anchor(h0)");
             return true;
@@ -373,12 +386,16 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             logMarkOnce(id, "mark skip: no action row (fallback)");
             return false;
         }
-        ViewGroup markRoot = (root instanceof ViewGroup) ? (ViewGroup) root : actionRow;
+        ViewGroup markRoot = actionRow;
         removeFoldMark(markRoot);
         TextView viewConv = findTextViewContains(actionRow, "\u67e5\u770b\u5bf9\u8bdd");
         if (viewConv != null) {
             TextView mark = newFoldMark(markRoot, viewConv);
             setMarkId(mark, id);
+            if (addMarkAfterAnchor(actionRow, viewConv, mark)) {
+                logMarkOnce(id, "mark add viewConv (fallback)");
+                return true;
+            }
             if (addOverlayMark(markRoot, viewConv, mark)) {
                 logMarkOnce(id, "mark overlay viewConv (fallback)");
                 return true;
@@ -395,6 +412,10 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         TextView base = (anchor instanceof TextView) ? (TextView) anchor : findFirstTextView(actionRow);
         TextView mark = newFoldMark(markRoot, base);
         setMarkId(mark, id);
+        if (addMarkAfterAnchor(actionRow, anchor, mark)) {
+            logMarkOnce(id, "mark add anchor (fallback)");
+            return true;
+        }
         if (addOverlayMark(markRoot, anchor, mark)) {
             logMarkOnce(id, "mark overlay anchor (fallback)");
             return true;
