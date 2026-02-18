@@ -327,10 +327,6 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         if (tvI != null && containsText(tvI, "\u67e5\u770b\u5bf9\u8bdd")) {
             TextView mark = newFoldMark(markRoot, tvI);
             setMarkId(mark, id);
-            if (addOverlayMarkRightOf(actionRow, tvI, mark)) {
-                logMarkOnce(id, "mark overlay right of viewConv(h0)");
-                return true;
-            }
             if (addMarkAfterAnchor(actionRow, tvI, mark)) {
                 logMarkOnce(id, "mark add viewConv(h0)");
                 return true;
@@ -343,10 +339,6 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         } else if (tvH != null && containsText(tvH, "\u67e5\u770b\u5bf9\u8bdd")) {
             TextView mark = newFoldMark(markRoot, tvH);
             setMarkId(mark, id);
-            if (addOverlayMarkRightOf(actionRow, tvH, mark)) {
-                logMarkOnce(id, "mark overlay right of viewConv(h0)");
-                return true;
-            }
             if (addMarkAfterAnchor(actionRow, tvH, mark)) {
                 logMarkOnce(id, "mark add viewConv(h0)");
                 return true;
@@ -385,6 +377,11 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         TextView mark = newFoldMark(markRoot, base);
         setMarkId(mark, id);
         View comment = findCommentActionView(actionRow);
+        if (comment != null && addMarkAfterAnchor(actionRow, comment, mark)) {
+            logMarkMoreOnce(id, actionRow, comment, base, "h0.comment");
+            logMarkOnce(id, "mark add after comment(h0)");
+            return true;
+        }
         if (comment != null && addOverlayMarkRightOf(actionRow, comment, mark)) {
             logMarkMoreOnce(id, actionRow, comment, base, "h0.comment");
             logMarkOnce(id, "mark overlay right of comment(h0)");
@@ -414,10 +411,6 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         if (viewConv != null) {
             TextView mark = newFoldMark(markRoot, viewConv);
             setMarkId(mark, id);
-            if (addOverlayMarkRightOf(actionRow, viewConv, mark)) {
-                logMarkOnce(id, "mark overlay right of viewConv (fallback)");
-                return true;
-            }
             if (addMarkAfterAnchor(actionRow, viewConv, mark)) {
                 logMarkOnce(id, "mark add viewConv (fallback)");
                 return true;
@@ -444,6 +437,11 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         TextView mark = newFoldMark(markRoot, base);
         setMarkId(mark, id);
         View comment = findCommentActionView(actionRow);
+        if (comment != null && addMarkAfterAnchor(actionRow, comment, mark)) {
+            logMarkMoreOnce(id, actionRow, comment, base, "fallback.comment");
+            logMarkOnce(id, "mark add after comment (fallback)");
+            return true;
+        }
         if (comment != null && addOverlayMarkRightOf(actionRow, comment, mark)) {
             logMarkMoreOnce(id, actionRow, comment, base, "fallback.comment");
             logMarkOnce(id, "mark overlay right of comment (fallback)");
