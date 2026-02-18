@@ -56,6 +56,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
     private static final ConcurrentHashMap<Long, Boolean> DEBUG_MARK_DETAIL_LOGGED = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<Long, Boolean> DEBUG_MARK_POS_LOGGED = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<Long, Boolean> DEBUG_MARK_PLACE_LOGGED = new ConcurrentHashMap<>();
+    private static final ConcurrentHashMap<Long, Boolean> DEBUG_MARK_MORE_LOGGED = new ConcurrentHashMap<>();
     private static final Set<Object> AUTO_EXPAND_ZIP = java.util.Collections.newSetFromMap(new java.util.WeakHashMap<Object, Boolean>());
 
     private static final String AUTO_EXPAND_TEXT = "\u5df2\u81ea\u52a8\u5c55\u5f00\u6298\u53e0\u8bc4\u8bba";
@@ -327,6 +328,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             setMarkId(mark, id);
             View more = findMoreActionView(actionRow);
             if (more != null && addMarkBeforeView(actionRow, more, mark, tvI)) {
+                logMarkMoreOnce(id, actionRow, more, tvI, "h0.viewConv");
                 logMarkOnce(id, "mark add before more viewConv(h0)");
                 return true;
             }
@@ -344,6 +346,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             setMarkId(mark, id);
             View more = findMoreActionView(actionRow);
             if (more != null && addMarkBeforeView(actionRow, more, mark, tvH)) {
+                logMarkMoreOnce(id, actionRow, more, tvH, "h0.viewConv");
                 logMarkOnce(id, "mark add before more viewConv(h0)");
                 return true;
             }
@@ -386,6 +389,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         setMarkId(mark, id);
         View more = findMoreActionView(actionRow);
         if (more != null && addMarkBeforeView(actionRow, more, mark, base)) {
+            logMarkMoreOnce(id, actionRow, more, base, "h0.anchor");
             logMarkOnce(id, "mark add before more(h0)");
             return true;
         }
@@ -415,6 +419,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             setMarkId(mark, id);
             View more = findMoreActionView(actionRow);
             if (more != null && addMarkBeforeView(actionRow, more, mark, viewConv)) {
+                logMarkMoreOnce(id, actionRow, more, viewConv, "fallback.viewConv");
                 logMarkOnce(id, "mark add before more viewConv (fallback)");
                 return true;
             }
@@ -445,6 +450,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         setMarkId(mark, id);
         View more = findMoreActionView(actionRow);
         if (more != null && addMarkBeforeView(actionRow, more, mark, base)) {
+            logMarkMoreOnce(id, actionRow, more, base, "fallback.anchor");
             logMarkOnce(id, "mark add before more (fallback)");
             return true;
         }
@@ -553,6 +559,31 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         if (id == 0L || msg == null) return;
         if (DEBUG_MARK_PLACE_LOGGED.putIfAbsent(id, Boolean.TRUE) != null) return;
         log("mark.place id=" + id + " " + msg);
+    }
+
+    private static void logMarkMoreOnce(long id, ViewGroup row, View more, TextView base, String tag) {
+        if (id == 0L || row == null || more == null) return;
+        if (DEBUG_MARK_MORE_LOGGED.putIfAbsent(id, Boolean.TRUE) != null) return;
+        int idx = row.indexOfChild(more);
+        String idName = "";
+        try {
+            if (more.getId() != View.NO_ID) {
+                idName = more.getResources().getResourceEntryName(more.getId());
+            }
+        } catch (Throwable ignored) {
+        }
+        CharSequence desc = more.getContentDescription();
+        CharSequence text = (more instanceof TextView) ? ((TextView) more).getText() : null;
+        log("mark.more id=" + id
+                + " tag=" + tag
+                + " rowCls=" + row.getClass().getSimpleName()
+                + " rowChild=" + row.getChildCount()
+                + " moreCls=" + more.getClass().getSimpleName()
+                + " moreIdx=" + idx
+                + " moreId=" + idName
+                + " moreDesc=" + desc
+                + " moreText=" + text
+                + " baseText=" + (base != null ? base.getText() : ""));
     }
 
     private static void logActionRowOnce(long id, ViewGroup group) {
