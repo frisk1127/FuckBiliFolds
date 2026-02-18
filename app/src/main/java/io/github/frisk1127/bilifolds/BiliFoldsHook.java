@@ -601,17 +601,20 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                 ViewGroup.LayoutParams.WRAP_CONTENT
         ));
         mark.setId(View.generateViewId());
-        android.view.ViewOverlay ov = host.getOverlay();
-        if (ov instanceof android.view.ViewGroupOverlay) {
-            ((android.view.ViewGroupOverlay) ov).add(mark);
-        }
-        try {
-            XposedHelpers.setAdditionalInstanceField(host, "BiliFoldsOverlayMark", mark);
-        } catch (Throwable ignored) {
-        }
-        mark.post(new Runnable() {
+        host.post(new Runnable() {
             @Override
             public void run() {
+                try {
+                    android.view.ViewOverlay ov = host.getOverlay();
+                    if (ov instanceof android.view.ViewGroupOverlay) {
+                        ((android.view.ViewGroupOverlay) ov).add(mark);
+                    }
+                } catch (Throwable ignored) {
+                }
+                try {
+                    XposedHelpers.setAdditionalInstanceField(host, "BiliFoldsOverlayMark", mark);
+                } catch (Throwable ignored) {
+                }
                 positionOverlayMark(host, anchor, mark);
             }
         });
