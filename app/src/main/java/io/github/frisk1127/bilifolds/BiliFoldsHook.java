@@ -421,9 +421,6 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         mark.setFocusable(false);
         mark.setVisibility(View.VISIBLE);
         mark.setAlpha(1.0f);
-        // DEBUG: 高对比度，确认 overlay 是否渲染
-        mark.setTextColor(0xFFFFFFFF);
-        mark.setBackgroundColor(0xAAFF0000);
         return mark;
     }
 
@@ -674,9 +671,6 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         }
         int l = Math.round(x);
         int t = Math.round(y);
-        // DEBUG: 强制固定位置，验证 overlay 是否可见（确认后可删）
-        l = dp(host.getContext(), 8);
-        t = dp(host.getContext(), 8);
         if (DEBUG_MARK_POS_LOGGED.putIfAbsent(id, Boolean.TRUE) == null) {
             log("mark.pos id=" + id
                     + " host=" + hostW + "x" + hostH
@@ -2705,3 +2699,4 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         Log.i(TAG, msg);
     }
 }
+
