@@ -55,6 +55,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
     private static final ConcurrentHashMap<Long, Boolean> DEBUG_MARK_LOGGED = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<Long, Boolean> DEBUG_MARK_DETAIL_LOGGED = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<Long, Boolean> DEBUG_MARK_POS_LOGGED = new ConcurrentHashMap<>();
+    private static final ConcurrentHashMap<Long, Boolean> DEBUG_MARK_PLACE_LOGGED = new ConcurrentHashMap<>();
     private static final Set<Object> AUTO_EXPAND_ZIP = java.util.Collections.newSetFromMap(new java.util.WeakHashMap<Object, Boolean>());
 
     private static final String AUTO_EXPAND_TEXT = "\u5df2\u81ea\u52a8\u5c55\u5f00\u6298\u53e0\u8bc4\u8bba";
@@ -364,6 +365,11 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             logActionRowOnce(id, actionRow);
             return false;
         }
+        logMarkPlaceOnce(id, "anchor(h0) cls=" + anchor.getClass().getSimpleName()
+                + " idx=" + actionRow.indexOfChild(anchor)
+                + " text=" + (anchor instanceof TextView ? ((TextView) anchor).getText() : "")
+                + " rowCls=" + actionRow.getClass().getSimpleName()
+                + " child=" + actionRow.getChildCount());
         if (hasFoldMark(markRoot)) return true;
         TextView base = (anchor instanceof TextView) ? (TextView) anchor : findFirstTextView(actionRow);
         TextView mark = newFoldMark(markRoot, base);
@@ -408,6 +414,11 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             logActionRowOnce(id, actionRow);
             return false;
         }
+        logMarkPlaceOnce(id, "anchor(fallback) cls=" + anchor.getClass().getSimpleName()
+                + " idx=" + actionRow.indexOfChild(anchor)
+                + " text=" + (anchor instanceof TextView ? ((TextView) anchor).getText() : "")
+                + " rowCls=" + actionRow.getClass().getSimpleName()
+                + " child=" + actionRow.getChildCount());
         if (hasFoldMark(markRoot)) return true;
         TextView base = (anchor instanceof TextView) ? (TextView) anchor : findFirstTextView(actionRow);
         TextView mark = newFoldMark(markRoot, base);
@@ -511,6 +522,12 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         if (id == 0L || msg == null) return;
         if (DEBUG_MARK_LOGGED.putIfAbsent(id, Boolean.TRUE) != null) return;
         log("mark id=" + id + " " + msg);
+    }
+
+    private static void logMarkPlaceOnce(long id, String msg) {
+        if (id == 0L || msg == null) return;
+        if (DEBUG_MARK_PLACE_LOGGED.putIfAbsent(id, Boolean.TRUE) != null) return;
+        log("mark.place id=" + id + " " + msg);
     }
 
     private static void logActionRowOnce(long id, ViewGroup group) {
