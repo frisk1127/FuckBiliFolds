@@ -922,6 +922,8 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             View resolved = resolveAnchorView(target);
             if (resolved != null) {
                 positionOverlayLeftOf(host, resolved, mark);
+            } else {
+                positionOverlayMark(host, target, mark);
             }
             return;
         }
@@ -1027,6 +1029,8 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             View resolved = resolveAnchorView(target);
             if (resolved != null) {
                 positionOverlayRightOf(host, resolved, mark);
+            } else {
+                positionOverlayMark(host, target, mark);
             }
             return;
         }
