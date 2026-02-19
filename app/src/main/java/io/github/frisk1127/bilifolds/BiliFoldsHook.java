@@ -60,6 +60,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
     private static final ConcurrentHashMap<Long, Boolean> DEBUG_MARK_MORE_LOGGED = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<Long, Boolean> DEBUG_MARK_LAYOUT_LOGGED = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<Long, Boolean> DEBUG_LIKE_LOGGED = new ConcurrentHashMap<>();
+    private static final ConcurrentHashMap<Long, Boolean> DEBUG_CLICK_LOGGED = new ConcurrentHashMap<>();
     private static final Set<Object> AUTO_EXPAND_ZIP = java.util.Collections.newSetFromMap(new java.util.WeakHashMap<Object, Boolean>());
 
     private static final String AUTO_EXPAND_TEXT = "\u5df2\u81ea\u52a8\u5c55\u5f00\u6298\u53e0\u8bc4\u8bba";
@@ -93,6 +94,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         safeHook("hookReplyControl", new Runnable() { @Override public void run() { hookReplyControl(APP_CL); } });
         safeHook("hookCommentItemTags", new Runnable() { @Override public void run() { hookCommentItemTags(APP_CL); } });
         safeHook("hookCommentItemFoldFlags", new Runnable() { @Override public void run() { hookCommentItemFoldFlags(APP_CL); } });
+        safeHook("hookActionDispatcher", new Runnable() { @Override public void run() { hookActionDispatcher(APP_CL); } });
         safeHook("hookZipCardView", new Runnable() { @Override public void run() { hookZipCardView(APP_CL); } });
         safeHook("hookZipDataSource", new Runnable() { @Override public void run() { hookZipDataSource(APP_CL); } });
         safeHook("hookDetailListDataSource", new Runnable() { @Override public void run() { hookDetailListDataSource(APP_CL); } });
@@ -984,6 +986,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             if (v.getAlpha() < 1f) {
                 v.setAlpha(1f);
             }
+            wrapFoldedActionClick(v, id);
             if (logged) {
                 String idName = "";
                 int vid = v.getId();
@@ -1008,6 +1011,34 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         }
         if (changed > 0 && !logged) {
             log("enable like for folded id=" + id + " total=" + total + " changed=" + changed);
+        }
+    }
+
+    private static void wrapFoldedActionClick(View v, long id) {
+        if (v == null || id == 0L) return;
+        try {
+            Object existing = XposedHelpers.getAdditionalInstanceField(v, "BiliFoldsClickWrapped");
+            if (existing instanceof Boolean && (Boolean) existing) return;
+        } catch (Throwable ignored) {
+        }
+        try {
+            Object listenerInfo = XposedHelpers.getObjectField(v, "mListenerInfo");
+            if (listenerInfo == null) return;
+            Object raw = XposedHelpers.getObjectField(listenerInfo, "mOnClickListener");
+            if (!(raw instanceof View.OnClickListener)) return;
+            final View.OnClickListener orig = (View.OnClickListener) raw;
+            View.OnClickListener wrapper = new View.OnClickListener() {
+                @Override
+                public void onClick(View view) {
+                    if (DEBUG_CLICK_LOGGED.putIfAbsent(id, Boolean.TRUE) == null) {
+                        log("like.click folded id=" + id + " view=" + view.getClass().getSimpleName());
+                    }
+                    orig.onClick(view);
+                }
+            };
+            XposedHelpers.setObjectField(listenerInfo, "mOnClickListener", wrapper);
+            XposedHelpers.setAdditionalInstanceField(v, "BiliFoldsClickWrapped", Boolean.TRUE);
+        } catch (Throwable ignored) {
         }
     }
 
@@ -1820,6 +1851,74 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         hookBooleanMethodReturnFalse(c, "isFolded");
         hookBooleanMethodReturnFalse(c, "getIsFolded");
         hookBooleanMethodReturnFalse(c, "getIsFoldedReply");
+    }
+
+    private static void hookActionDispatcher(ClassLoader cl) {
+        Class<?> c = XposedHelpers.findClassIfExists(
+                "com.bilibili.app.comment3.action.c",
+                cl
+        );
+        if (c == null) {
+            log("action dispatcher class not found");
+            return;
+        }
+        XposedBridge.hookAllMethods(c, "b", new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam param) {
+                try {
+                    long id = extractFoldedIdFromArgs(param.args);
+                    if (id == 0L) return;
+                    String arg0 = param.args != null && param.args.length > 0 && param.args[0] != null
+                            ? param.args[0].getClass().getName() : "null";
+                    log("action.dispatch folded id=" + id + " arg0=" + arg0);
+                } catch (Throwable ignored) {
+                }
+            }
+        });
+    }
+
+    private static long extractFoldedIdFromArgs(Object[] args) {
+        if (args == null) return 0L;
+        for (Object a : args) {
+            if (a == null) continue;
+            if (isCommentItem(a)) {
+                long id = getId(a);
+                if (id != 0L && Boolean.TRUE.equals(FOLDED_IDS.get(id))) return id;
+            }
+            long id = extractCommentIdFromObject(a);
+            if (id != 0L && Boolean.TRUE.equals(FOLDED_IDS.get(id))) return id;
+        }
+        return 0L;
+    }
+
+    private static long extractCommentIdFromObject(Object obj) {
+        if (obj == null) return 0L;
+        try {
+            Field[] fields = obj.getClass().getDeclaredFields();
+            for (Field f : fields) {
+                if (f == null) continue;
+                Class<?> t = f.getType();
+                if (t == null) continue;
+                String name = f.getName() == null ? "" : f.getName().toLowerCase();
+                boolean maybeId = (t == long.class || t == Long.class) && (name.contains("id") || name.contains("rpid"));
+                boolean maybeItem = name.contains("comment") || name.contains("reply") || name.contains("item");
+                if (!maybeId && !maybeItem && t != Object.class) {
+                    continue;
+                }
+                f.setAccessible(true);
+                Object v = f.get(obj);
+                if (isCommentItem(v)) {
+                    long id = getId(v);
+                    if (id != 0L) return id;
+                }
+                if (maybeId && v instanceof Number) {
+                    long id = ((Number) v).longValue();
+                    if (id != 0L) return id;
+                }
+            }
+        } catch (Throwable ignored) {
+        }
+        return 0L;
     }
 
     private static void hookBooleanMethodReturnFalse(Class<?> c, String name) {
