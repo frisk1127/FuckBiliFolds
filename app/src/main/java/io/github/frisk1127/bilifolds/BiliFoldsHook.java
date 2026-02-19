@@ -65,6 +65,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
     private static final ConcurrentHashMap<Long, Boolean> DEBUG_LIKE_FORCE_LOGGED = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<Long, Boolean> DEBUG_REPLY_FORCE_LOGGED = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<Long, Boolean> DEBUG_LIKE_REFRESH_LOGGED = new ConcurrentHashMap<>();
+    private static final ConcurrentHashMap<Long, Boolean> DEBUG_LIKE_OPT_LOGGED = new ConcurrentHashMap<>();
     private static final ThreadLocal<Long> CLICK_FOLDED_ID = new ThreadLocal<>();
     private static final ThreadLocal<java.util.ArrayDeque<Long>> CLICK_ID_STACK = new ThreadLocal<>();
     private static final Set<Object> AUTO_EXPAND_ZIP = java.util.Collections.newSetFromMap(new java.util.WeakHashMap<Object, Boolean>());
@@ -1265,6 +1266,11 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             View.OnClickListener wrapper = new View.OnClickListener() {
                 @Override
                 public void onClick(View view) {
+                    boolean preSelected = false;
+                    try {
+                        preSelected = view.isSelected() || view.isActivated();
+                    } catch (Throwable ignored) {
+                    }
                     long clickId = getAdditionalLong(view, "BiliFoldsCommentId");
                     Object item = getAdditionalObject(view, "BiliFoldsCommentItem");
                     if (!isCommentItem(item)) {
@@ -1297,6 +1303,14 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                     } finally {
                         if (folded) {
                             popClickFoldedId();
+                            Boolean newLiked = optimisticLikeUpdate(clickId, view, preSelected);
+                            if (newLiked != null) {
+                                try {
+                                    view.setSelected(newLiked);
+                                    view.setActivated(newLiked);
+                                } catch (Throwable ignored) {
+                                }
+                            }
                             scheduleLikeRefresh(clickId);
                         }
                     }
@@ -3183,6 +3197,216 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             if (cid == id) return i;
         }
         return -1;
+    }
+
+    private static Object findCommentItemById(List<?> list, long id) {
+        if (list == null || id == 0L) return null;
+        for (Object item : list) {
+            if (!isCommentItem(item)) continue;
+            if (getId(item) == id) return item;
+        }
+        return null;
+    }
+
+    private static Object getCommentItemFromAdapter(long id) {
+        if (id == 0L) return null;
+        Object adapter = LAST_COMMENT_ADAPTER == null ? null : LAST_COMMENT_ADAPTER.get();
+        if (adapter == null) return null;
+        try {
+            Object differ = XposedHelpers.getObjectField(adapter, "c");
+            Object listObj = differ == null ? null : XposedHelpers.callMethod(differ, "a");
+            if (!(listObj instanceof List)) return null;
+            return findCommentItemById((List<?>) listObj, id);
+        } catch (Throwable ignored) {
+            return null;
+        }
+    }
+
+    private static Object getCommentItemFromCaches(long id, Set<Object> visited) {
+        if (id == 0L) return null;
+        if (visited == null) visited = new HashSet<>();
+        Object item = findCommentItemById(FOLD_CACHE.get(id), id);
+        if (isCommentItem(item)) return item;
+        for (ArrayList<Object> list : FOLD_CACHE_BY_OFFSET.values()) {
+            item = findCommentItemById(list, id);
+            if (isCommentItem(item)) return item;
+        }
+        for (ArrayList<Object> list : FOLD_CACHE_BY_SUBJECT.values()) {
+            item = findCommentItemById(list, id);
+            if (isCommentItem(item)) return item;
+        }
+        return null;
+    }
+
+    private static Boolean optimisticLikeUpdate(long id, View view, boolean preSelected) {
+        if (id == 0L) return null;
+        Object item = getAdditionalObject(view, "BiliFoldsCommentItem");
+        if (!isCommentItem(item)) {
+            item = getCommentItemFromAdapter(id);
+        }
+        if (!isCommentItem(item)) {
+            item = getCommentItemFromCaches(id, new HashSet<Object>());
+        }
+        Boolean current = guessLikeState(item, new HashSet<Object>(), 3);
+        boolean newLiked = current != null ? !current : !preSelected;
+        int delta = 0;
+        if (current != null) {
+            if (current != newLiked) delta = newLiked ? 1 : -1;
+        } else {
+            delta = newLiked ? 1 : 0;
+        }
+        HashSet<Object> updated = new HashSet<>();
+        int count = updateLikeDeep(item, newLiked, delta, updated, 3);
+        count += updateLikeInCaches(id, newLiked, delta, updated);
+        if (DEBUG_LIKE_OPT_LOGGED.putIfAbsent(id, Boolean.TRUE) == null) {
+            log("like.optimistic folded id=" + id + " liked=" + newLiked + " delta=" + delta + " updated=" + count);
+        }
+        return newLiked;
+    }
+
+    private static int updateLikeInCaches(long id, boolean liked, int delta, Set<Object> updated) {
+        int count = 0;
+        ArrayList<Object> byRoot = FOLD_CACHE.get(id);
+        count += updateLikeInList(byRoot, id, liked, delta, updated);
+        for (ArrayList<Object> list : FOLD_CACHE_BY_OFFSET.values()) {
+            count += updateLikeInList(list, id, liked, delta, updated);
+        }
+        for (ArrayList<Object> list : FOLD_CACHE_BY_SUBJECT.values()) {
+            count += updateLikeInList(list, id, liked, delta, updated);
+        }
+        return count;
+    }
+
+    private static int updateLikeInList(List<?> list, long id, boolean liked, int delta, Set<Object> updated) {
+        if (list == null || id == 0L) return 0;
+        int count = 0;
+        for (Object item : list) {
+            if (!isCommentItem(item)) continue;
+            if (getId(item) != id) continue;
+            count += updateLikeDeep(item, liked, delta, updated, 3);
+        }
+        return count;
+    }
+
+    private static Boolean guessLikeState(Object obj, Set<Object> visited, int depth) {
+        if (obj == null || depth < 0) return null;
+        if (visited == null) visited = new HashSet<>();
+        if (visited.contains(obj)) return null;
+        visited.add(obj);
+        String clsName = obj.getClass().getName();
+        if (clsName.startsWith("java.") || clsName.startsWith("android.")) return null;
+        Object lazyValue = tryGetLazyValue(obj);
+        if (lazyValue != null) {
+            Boolean v = guessLikeState(lazyValue, visited, depth - 1);
+            if (v != null) return v;
+        }
+        Field[] fields = obj.getClass().getDeclaredFields();
+        for (Field f : fields) {
+            if (f == null) continue;
+            String name = f.getName();
+            if (name == null) continue;
+            String n = name.toLowerCase();
+            if (!isLikeName(n) || isDislikeName(n)) continue;
+            try {
+                f.setAccessible(true);
+                Object v = f.get(obj);
+                Class<?> t = f.getType();
+                if (t == boolean.class || t == Boolean.class) {
+                    return v instanceof Boolean ? (Boolean) v : null;
+                }
+                if ((t == int.class || t == Integer.class || t == long.class || t == Long.class) && isLikeStateName(n)) {
+                    if (v instanceof Number) return ((Number) v).intValue() > 0;
+                }
+                if (v != null && depth > 0) {
+                    Boolean child = guessLikeState(v, visited, depth - 1);
+                    if (child != null) return child;
+                }
+            } catch (Throwable ignored) {
+            }
+        }
+        return null;
+    }
+
+    private static int updateLikeDeep(Object obj, boolean liked, int delta, Set<Object> visited, int depth) {
+        if (obj == null || depth < 0) return 0;
+        if (visited == null) visited = new HashSet<>();
+        if (visited.contains(obj)) return 0;
+        visited.add(obj);
+        String clsName = obj.getClass().getName();
+        if (clsName.startsWith("java.") || clsName.startsWith("android.")) return 0;
+        int updated = 0;
+        Object lazyValue = tryGetLazyValue(obj);
+        if (lazyValue != null) {
+            updated += updateLikeDeep(lazyValue, liked, delta, visited, depth - 1);
+        }
+        Field[] fields = obj.getClass().getDeclaredFields();
+        for (Field f : fields) {
+            if (f == null) continue;
+            String name = f.getName();
+            if (name == null) continue;
+            String n = name.toLowerCase();
+            boolean likeName = isLikeName(n) && !isDislikeName(n);
+            try {
+                f.setAccessible(true);
+                Object v = f.get(obj);
+                Class<?> t = f.getType();
+                if (likeName && (t == boolean.class || t == Boolean.class)) {
+                    f.setBoolean(obj, liked);
+                    updated++;
+                } else if (likeName && isLikeStateName(n) && (t == int.class || t == Integer.class || t == long.class || t == Long.class)) {
+                    if (t == long.class || t == Long.class) f.set(obj, liked ? 1L : 0L);
+                    else f.set(obj, liked ? 1 : 0);
+                    updated++;
+                } else if (likeName && isLikeCountName(n) && delta != 0 && (t == int.class || t == Integer.class || t == long.class || t == Long.class)) {
+                    long base = v instanceof Number ? ((Number) v).longValue() : 0L;
+                    long nv = base + delta;
+                    if (nv < 0) nv = 0;
+                    if (t == long.class || t == Long.class) f.set(obj, nv);
+                    else f.set(obj, (int) nv);
+                    updated++;
+                }
+                if (depth > 0 && v != null) {
+                    String typeName = v.getClass().getName();
+                    if (v instanceof List) {
+                        List<?> list = (List<?>) v;
+                        int max = Math.min(6, list.size());
+                        for (int i = 0; i < max; i++) {
+                            updated += updateLikeDeep(list.get(i), liked, delta, visited, depth - 1);
+                        }
+                    } else if (v.getClass().isArray()) {
+                        int len = java.lang.reflect.Array.getLength(v);
+                        int max = Math.min(6, len);
+                        for (int i = 0; i < max; i++) {
+                            updated += updateLikeDeep(java.lang.reflect.Array.get(v, i), liked, delta, visited, depth - 1);
+                        }
+                    } else if (!typeName.startsWith("java.") && !typeName.startsWith("android.")) {
+                        updated += updateLikeDeep(v, liked, delta, visited, depth - 1);
+                    }
+                }
+            } catch (Throwable ignored) {
+            }
+        }
+        return updated;
+    }
+
+    private static boolean isLikeName(String n) {
+        if (n == null) return false;
+        return n.contains("like") || n.contains("zan") || n.contains("thumb") || n.contains("up");
+    }
+
+    private static boolean isDislikeName(String n) {
+        if (n == null) return false;
+        return n.contains("dislike") || n.contains("down");
+    }
+
+    private static boolean isLikeCountName(String n) {
+        if (n == null) return false;
+        return n.contains("count") || n.contains("num") || n.contains("cnt") || n.contains("total");
+    }
+
+    private static boolean isLikeStateName(String n) {
+        if (n == null) return false;
+        return n.contains("state") || n.contains("status");
     }
 
     private static long getCreateTime(Object item) {
