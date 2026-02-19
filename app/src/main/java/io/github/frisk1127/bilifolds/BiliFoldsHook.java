@@ -64,6 +64,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
     private static final ThreadLocal<Boolean> RESUBMITTING = new ThreadLocal<>();
     private static volatile android.os.Handler MAIN_HANDLER = null;
     private static volatile ClassLoader APP_CL = null;
+    private static volatile Class<?> REPLY_CONTROL_CLASS = null;
 
     private static volatile Object FOLD_TAG_TEMPLATE = null;
     private static volatile ClassLoader FOLD_TAG_CL = null;
@@ -103,10 +104,39 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             log("ReplyControl class not found");
             return;
         }
+        REPLY_CONTROL_CLASS = c;
         XposedHelpers.findAndHookMethod(c, "getIsFoldedReply", new XC_MethodReplacement() {
             @Override
             protected Object replaceHookedMethod(MethodHookParam param) {
                 return false;
+            }
+        });
+        XposedHelpers.findAndHookMethod(c, "getBlocked", new XC_MethodHook() {
+            @Override
+            protected void afterHookedMethod(MethodHookParam param) {
+                if (isReplyControlMarked(param.thisObject)) {
+                    param.setResult(false);
+                }
+            }
+        });
+        XposedHelpers.findAndHookMethod(c, "getInvisible", new XC_MethodHook() {
+            @Override
+            protected void afterHookedMethod(MethodHookParam param) {
+                if (isReplyControlMarked(param.thisObject)) {
+                    param.setResult(false);
+                }
+            }
+        });
+        XposedHelpers.findAndHookMethod(c, "getAction", new XC_MethodHook() {
+            @Override
+            protected void afterHookedMethod(MethodHookParam param) {
+                if (!isReplyControlMarked(param.thisObject)) return;
+                Object res = param.getResult();
+                long v = 0L;
+                if (res instanceof Number) v = ((Number) res).longValue();
+                if (v == 0L) {
+                    param.setResult(Long.MAX_VALUE);
+                }
             }
         });
     }
@@ -515,6 +545,9 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                     if (getRootId(o) != id && id != 0) {
                         FOLDED_IDS.put(id, Boolean.TRUE);
                     }
+                    if (id != 0) {
+                        markReplyControlInItem(o, id);
+                    }
                     out.add(o);
                     if (id != 0) existingIds.add(id);
                 }
@@ -575,6 +608,13 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             for (Object o : cached) {
                 long id = getId(o);
                 if (id != 0 && existingIds.contains(id)) continue;
+                forceUnfold(o);
+                if (getRootId(o) != id && id != 0) {
+                    FOLDED_IDS.put(id, Boolean.TRUE);
+                }
+                if (id != 0) {
+                    markReplyControlInItem(o, id);
+                }
                 out.add(idx + inserted, o);
                 inserted++;
                 if (id != 0) existingIds.add(id);
@@ -1300,6 +1340,90 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             XposedHelpers.setBooleanField(item, "f55132u", false);
         } catch (Throwable ignored) {
         }
+    }
+
+    private static void markReplyControlInItem(Object item, long commentId) {
+        if (item == null || commentId == 0L) return;
+        Object rc = findReplyControl(item, 2);
+        if (rc == null) return;
+        markReplyControl(rc, commentId);
+    }
+
+    private static Object findReplyControl(Object obj, int depth) {
+        if (obj == null) return null;
+        if (isReplyControlObject(obj)) return obj;
+        if (depth <= 0) return null;
+        if (obj instanceof List) {
+            for (Object v : (List<?>) obj) {
+                Object found = findReplyControl(v, depth - 1);
+                if (found != null) return found;
+            }
+            return null;
+        }
+        if (obj instanceof Map) {
+            for (Object v : ((Map<?, ?>) obj).values()) {
+                Object found = findReplyControl(v, depth - 1);
+                if (found != null) return found;
+            }
+            return null;
+        }
+        String clsName = obj.getClass().getName();
+        if (clsName.startsWith("java.") || clsName.startsWith("android.") || clsName.startsWith("kotlin.")) {
+            return null;
+        }
+        Field[] fields = obj.getClass().getDeclaredFields();
+        for (Field f : fields) {
+            if (java.lang.reflect.Modifier.isStatic(f.getModifiers())) continue;
+            try {
+                f.setAccessible(true);
+                Object v = f.get(obj);
+                if (v == null) continue;
+                if (isReplyControlObject(v)) return v;
+                if (isLikelyModel(v)) {
+                    Object found = findReplyControl(v, depth - 1);
+                    if (found != null) return found;
+                }
+            } catch (Throwable ignored) {
+            }
+        }
+        return null;
+    }
+
+    private static boolean isReplyControlObject(Object obj) {
+        if (obj == null) return false;
+        if (REPLY_CONTROL_CLASS != null && REPLY_CONTROL_CLASS.isInstance(obj)) return true;
+        String name = obj.getClass().getName();
+        return name.endsWith("ReplyControl") || name.contains("ReplyControl");
+    }
+
+    private static boolean isLikelyModel(Object obj) {
+        if (obj == null) return false;
+        String name = obj.getClass().getName();
+        return name.startsWith("com.bilibili.app.comment3")
+                || name.startsWith("com.bapis.bilibili.main.community.reply");
+    }
+
+    private static void markReplyControl(Object obj, long commentId) {
+        if (obj == null) return;
+        try {
+            Object existed = XposedHelpers.getAdditionalInstanceField(obj, "BiliFoldsReplyControl");
+            if (existed != null) return;
+        } catch (Throwable ignored) {
+        }
+        try {
+            XposedHelpers.setAdditionalInstanceField(obj, "BiliFoldsReplyControl", Long.valueOf(commentId));
+        } catch (Throwable ignored) {
+        }
+    }
+
+    private static boolean isReplyControlMarked(Object obj) {
+        if (obj == null) return false;
+        try {
+            Object v = XposedHelpers.getAdditionalInstanceField(obj, "BiliFoldsReplyControl");
+            return v != null;
+        } catch (Throwable ignored) {
+        }
+        return false;
     }
 
     private static void markFoldedTag(Object item) {
