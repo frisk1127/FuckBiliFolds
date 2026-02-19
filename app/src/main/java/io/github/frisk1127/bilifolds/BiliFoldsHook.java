@@ -44,6 +44,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
 
     private static final ConcurrentHashMap<Long, ArrayList<Object>> FOLD_CACHE = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<String, ArrayList<Object>> FOLD_CACHE_BY_OFFSET = new ConcurrentHashMap<>();
+    private static final ConcurrentHashMap<String, ArrayList<Object>> FOLD_CACHE_BY_SUBJECT = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<String, Long> OFFSET_TO_ROOT = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<String, Boolean> AUTO_FETCHING = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<Long, Boolean> FOLDED_IDS = new ConcurrentHashMap<>();
@@ -217,10 +218,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                 Object listObj = param.args[0];
                 if (!(listObj instanceof List)) return;
                 List<?> list = (List<?>) listObj;
-                if (!containsFooterCard(list)) {
-                    prefetchFoldList(list);
-                    return;
-                }
+                prefetchFoldList(list);
                 List<?> replaced = replaceZipCardsInList(list, "CommentListAdapter.b1");
                 if (replaced != null) {
                     param.args[0] = replaced;
@@ -1577,6 +1575,14 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         }
         ArrayList<Object> existing = FOLD_CACHE_BY_OFFSET.computeIfAbsent(key, k -> new ArrayList<>());
         mergeUniqueById(existing, bucket);
+        String subjectKey = getCurrentSubjectKey();
+        if (subjectKey == null) {
+            subjectKey = deriveSubjectKeyFromList(list);
+        }
+        if (subjectKey != null) {
+            ArrayList<Object> bySubject = FOLD_CACHE_BY_SUBJECT.computeIfAbsent(subjectKey, k -> new ArrayList<>());
+            mergeUniqueById(bySubject, bucket);
+        }
         if (rootId != 0L) {
             ArrayList<Object> byRoot = FOLD_CACHE.computeIfAbsent(rootId, k -> new ArrayList<>());
             mergeUniqueById(byRoot, bucket);
@@ -1732,6 +1738,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         if (list == null || list.isEmpty()) return null;
         ArrayList<Object> out = new ArrayList<>(list.size());
         boolean changed = false;
+        boolean sawZipCard = false;
         Boolean desc = Boolean.FALSE;
         String subjectKey = getCurrentSubjectKey();
         if (subjectKey == null) {
@@ -1747,6 +1754,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                 continue;
             }
             if (isZipCard(item)) {
+                sawZipCard = true;
                 if (subjectKey != null) {
                     SUBJECT_HAS_FOLD.put(subjectKey, Boolean.TRUE);
                 }
@@ -1808,6 +1816,11 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         }
         if (injectCachedByPendingOffsets(out, existingIds)) {
             changed = true;
+        }
+        if (!sawZipCard) {
+            if (injectCachedBySubject(out, existingIds, subjectKey)) {
+                changed = true;
+            }
         }
         if (!changed) return null;
         if (subjectKey != null) {
@@ -1877,6 +1890,29 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             }
         }
         return changed;
+    }
+
+    private static boolean injectCachedBySubject(ArrayList<Object> out, HashSet<Long> existingIds, String subjectKey) {
+        if (out == null || subjectKey == null || subjectKey.isEmpty()) return false;
+        if (!Boolean.TRUE.equals(SUBJECT_HAS_FOLD.get(subjectKey))) return false;
+        ArrayList<Object> cached = FOLD_CACHE_BY_SUBJECT.get(subjectKey);
+        if (cached == null || cached.isEmpty()) return false;
+        int inserted = 0;
+        for (Object o : cached) {
+            if (o == null || !isCommentItem(o)) continue;
+            long id = getId(o);
+            if (id != 0 && existingIds.contains(id)) continue;
+            forceUnfold(o);
+            out.add(o);
+            inserted++;
+            if (id != 0) existingIds.add(id);
+        }
+        if (inserted > 0) {
+            SUBJECT_EXPANDED.put(subjectKey, Boolean.TRUE);
+            log("inject subject cached size=" + cached.size() + " inserted=" + inserted + " key=" + subjectKey);
+            return true;
+        }
+        return false;
     }
 
     private static void debugLogCommentFold(Object item) {
@@ -2361,6 +2397,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
     private static void clearFoldCaches() {
         FOLD_CACHE.clear();
         FOLD_CACHE_BY_OFFSET.clear();
+        FOLD_CACHE_BY_SUBJECT.clear();
         OFFSET_TO_ROOT.clear();
         OFFSET_INSERT_INDEX.clear();
         AUTO_FETCHING.clear();
@@ -2677,6 +2714,56 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         try {
             XposedHelpers.setBooleanField(item, "f55132u", false);
         } catch (Throwable ignored) {
+        }
+        normalizeFoldFlags(item, new HashSet<Object>());
+    }
+
+    private static void normalizeFoldFlags(Object obj, Set<Object> visited) {
+        if (obj == null) return;
+        if (visited == null) visited = new HashSet<>();
+        if (visited.contains(obj)) return;
+        visited.add(obj);
+        try {
+            tryCall(obj, "setIsFolded", false);
+            tryCall(obj, "setFolded", false);
+            tryCall(obj, "setFold", false);
+            tryCall(obj, "setIsFoldedReply", false);
+            tryCall(obj, "setFoldedReply", false);
+        } catch (Throwable ignored) {
+        }
+        Field[] fields = obj.getClass().getDeclaredFields();
+        for (Field f : fields) {
+            if (f == null) continue;
+            String name = f.getName();
+            if (name == null) continue;
+            String n = name.toLowerCase();
+            boolean foldFlag = n.contains("fold") || n.contains("invisible") || n.contains("hidden");
+            if (!foldFlag && !n.contains("replycontrol") && !n.contains("control")) {
+                continue;
+            }
+            try {
+                f.setAccessible(true);
+                Object v = f.get(obj);
+                Class<?> t = f.getType();
+                if (t == boolean.class || t == Boolean.class) {
+                    if (foldFlag) {
+                        f.setBoolean(obj, false);
+                    }
+                } else if (Number.class.isAssignableFrom(t) || t.isPrimitive()) {
+                    if (foldFlag) {
+                        if (t == int.class || t == Integer.class) f.set(obj, 0);
+                        else if (t == long.class || t == Long.class) f.set(obj, 0L);
+                        else if (t == short.class || t == Short.class) f.set(obj, (short) 0);
+                        else if (t == byte.class || t == Byte.class) f.set(obj, (byte) 0);
+                    }
+                } else if (v != null) {
+                    String typeName = t.getName();
+                    if (typeName.contains("ReplyControl") || n.contains("replycontrol")) {
+                        normalizeFoldFlags(v, visited);
+                    }
+                }
+            } catch (Throwable ignored) {
+            }
         }
     }
 
