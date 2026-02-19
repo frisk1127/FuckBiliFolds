@@ -122,6 +122,30 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                 return false;
             }
         });
+        XposedBridge.hookAllMethods(c, "getBlocked", new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam param) {
+                if (isReplyControlMarked(param.thisObject)) {
+                    param.setResult(false);
+                }
+            }
+        });
+        XposedBridge.hookAllMethods(c, "getInvisible", new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam param) {
+                if (isReplyControlMarked(param.thisObject)) {
+                    param.setResult(false);
+                }
+            }
+        });
+        XposedBridge.hookAllMethods(c, "getAction", new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam param) {
+                if (isReplyControlMarked(param.thisObject)) {
+                    param.setResult(Long.MAX_VALUE);
+                }
+            }
+        });
     }
 
     private static void hookZipDataSource(ClassLoader cl) {
@@ -2801,10 +2825,10 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             XposedHelpers.setBooleanField(item, "f55132u", false);
         } catch (Throwable ignored) {
         }
-        normalizeFoldFlags(item, new HashSet<Object>());
+        normalizeFoldFlags(item, new HashSet<Object>(), getId(item));
     }
 
-    private static void normalizeFoldFlags(Object obj, Set<Object> visited) {
+    private static void normalizeFoldFlags(Object obj, Set<Object> visited, long commentId) {
         if (obj == null) return;
         if (visited == null) visited = new HashSet<>();
         if (visited.contains(obj)) return;
@@ -2824,7 +2848,9 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             if (name == null) continue;
             String n = name.toLowerCase();
             boolean foldFlag = n.contains("fold") || n.contains("invisible") || n.contains("hidden");
-            if (!foldFlag && !n.contains("replycontrol") && !n.contains("control")) {
+            boolean blockFlag = n.contains("blocked") || n.contains("block");
+            boolean actionFlag = n.contains("action");
+            if (!foldFlag && !blockFlag && !actionFlag && !n.contains("replycontrol") && !n.contains("control")) {
                 continue;
             }
             try {
@@ -2832,7 +2858,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                 Object v = f.get(obj);
                 Class<?> t = f.getType();
                 if (t == boolean.class || t == Boolean.class) {
-                    if (foldFlag) {
+                    if (foldFlag || blockFlag) {
                         f.setBoolean(obj, false);
                     }
                 } else if (Number.class.isAssignableFrom(t) || t.isPrimitive()) {
@@ -2841,15 +2867,40 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                         else if (t == long.class || t == Long.class) f.set(obj, 0L);
                         else if (t == short.class || t == Short.class) f.set(obj, (short) 0);
                         else if (t == byte.class || t == Byte.class) f.set(obj, (byte) 0);
+                    } else if (actionFlag) {
+                        if (t == long.class || t == Long.class) f.set(obj, Long.MAX_VALUE);
+                        else if (t == int.class || t == Integer.class) f.set(obj, -1);
                     }
                 } else if (v != null) {
                     String typeName = t.getName();
                     if (typeName.contains("ReplyControl") || n.contains("replycontrol")) {
-                        normalizeFoldFlags(v, visited);
+                        markReplyControl(v, commentId);
+                        normalizeFoldFlags(v, visited, commentId);
                     }
                 }
             } catch (Throwable ignored) {
             }
+        }
+    }
+
+    private static void markReplyControl(Object obj, long commentId) {
+        if (obj == null) return;
+        try {
+            XposedHelpers.setAdditionalInstanceField(obj, "BiliFoldsForceAction", Boolean.TRUE);
+            if (commentId != 0L) {
+                XposedHelpers.setAdditionalInstanceField(obj, "BiliFoldsCommentId", commentId);
+            }
+        } catch (Throwable ignored) {
+        }
+    }
+
+    private static boolean isReplyControlMarked(Object obj) {
+        if (obj == null) return false;
+        try {
+            Object v = XposedHelpers.getAdditionalInstanceField(obj, "BiliFoldsForceAction");
+            return Boolean.TRUE.equals(v);
+        } catch (Throwable ignored) {
+            return false;
         }
     }
 
