@@ -324,7 +324,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         TextView tvH = getBindingTextView(binding, "h", "f400673h");
         TextView tvC = getBindingTextView(binding, "c", "f400668c");
         TextView anchor = null;
-        if (tvI != null && containsText(tvI, "\u67e5\u770b\u5bf9\u8bdd")) {
+        if (tvI != null && containsText(tvI, "\u67e5\u770b\u5bf9\u8bdd") && isVisibleView(tvI)) {
             TextView mark = newFoldMark(markRoot, tvI);
             setMarkId(mark, id);
             logActionRowLayoutOnce(id, actionRow);
@@ -353,7 +353,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                 return true;
             }
             return false;
-        } else if (tvH != null && containsText(tvH, "\u67e5\u770b\u5bf9\u8bdd")) {
+        } else if (tvH != null && containsText(tvH, "\u67e5\u770b\u5bf9\u8bdd") && isVisibleView(tvH)) {
             TextView mark = newFoldMark(markRoot, tvH);
             setMarkId(mark, id);
             logActionRowLayoutOnce(id, actionRow);
@@ -449,7 +449,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         ViewGroup markRoot = actionRow;
         removeFoldMark(markRoot);
         TextView viewConv = findTextViewContains(actionRow, "\u67e5\u770b\u5bf9\u8bdd");
-        if (viewConv != null) {
+        if (viewConv != null && isVisibleView(viewConv)) {
             TextView mark = newFoldMark(markRoot, viewConv);
             setMarkId(mark, id);
             logActionRowLayoutOnce(id, actionRow);
@@ -772,6 +772,11 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         if (tv == null) return false;
         CharSequence t = tv.getText();
         return t != null && t.toString().trim().length() > 0;
+    }
+
+    private static boolean isVisibleView(View v) {
+        if (v == null) return false;
+        return v.getVisibility() == View.VISIBLE;
     }
 
     private static boolean addMarkAfterAnchor(ViewGroup group, View anchor, TextView mark) {
