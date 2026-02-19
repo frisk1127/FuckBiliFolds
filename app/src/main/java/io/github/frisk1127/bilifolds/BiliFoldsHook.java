@@ -81,6 +81,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
 
     private static volatile WeakReference<Object> LAST_SUBJECT_ID = new WeakReference<>(null);
     private static volatile String LAST_SUBJECT_KEY = null;
+    private static volatile String LAST_SCOPE_KEY = null;
     private static volatile String LAST_EXTRA = null;
     private static volatile Object LAST_SORT_MODE = null;
     private static volatile WeakReference<Object> LAST_COMMENT_ADAPTER = new WeakReference<>(null);
@@ -2366,13 +2367,17 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         if (realOffset == null) {
             return;
         }
-        String key = realOffset;
+        String scopeKey = getCurrentScopeKey();
+        String key = makeOffsetKey(realOffset, scopeKey);
         if (key == null || key.isEmpty()) {
             return;
         }
         ArrayList<Object> existing = FOLD_CACHE_BY_OFFSET.computeIfAbsent(key, k -> new ArrayList<>());
         mergeUniqueById(existing, bucket);
-        String subjectKey = getCurrentSubjectKey();
+        String subjectKey = scopeKey;
+        if (subjectKey == null) {
+            subjectKey = getCurrentSubjectKey();
+        }
         if (subjectKey == null) {
             subjectKey = deriveSubjectKeyFromList(list);
         }
@@ -2383,7 +2388,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         if (rootId != 0L) {
             ArrayList<Object> byRoot = FOLD_CACHE.computeIfAbsent(rootId, k -> new ArrayList<>());
             mergeUniqueById(byRoot, bucket);
-            OFFSET_TO_ROOT.put(realOffset, rootId);
+            putRootForOffset(realOffset, scopeKey, rootId);
         }
         tryUpdateCommentAdapterList(realOffset);
     }
@@ -2605,10 +2610,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         boolean changed = false;
         boolean sawZipCard = false;
         Boolean desc = Boolean.FALSE;
-        String subjectKey = getCurrentSubjectKey();
-        if (subjectKey == null) {
-            subjectKey = deriveSubjectKeyFromList(list);
-        }
+        String subjectKey = updateScopeKeyFromList(list);
         HashSet<Long> existingIds = collectCommentIds(list);
         HashMap<Long, ArrayList<Object>> tipsByRoot = new HashMap<>();
         ArrayList<Object> tipsNoRoot = new ArrayList<>();
@@ -2629,16 +2631,16 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                     rootId = findPrevCommentRootId(list, i);
                 }
                 if (offset != null && !offset.isEmpty() && rootId > 0) {
-                    OFFSET_TO_ROOT.put(offset, rootId);
+                    putRootForOffset(offset, subjectKey, rootId);
                 }
-                String key = offset;
+                String key = makeOffsetKey(offset, subjectKey);
                 if (key != null && !key.isEmpty()) {
                     OFFSET_INSERT_INDEX.put(key, i);
                 }
-                List<Object> cached = getCachedFoldListForZip(item, offset, desc);
+                List<Object> cached = getCachedFoldListForZip(item, offset, desc, subjectKey);
                 if (cached == null || cached.isEmpty()) {
                     log("zip card cache miss offset=" + offset + " root=" + rootId + " tag=" + tag);
-                    tryAutoFetchFoldList(offset, getCurrentSubjectKey(), rootId);
+                    tryAutoFetchFoldList(offset, subjectKey, rootId);
                     markAutoExpand(item);
                     out.add(item);
                     continue;
@@ -2679,7 +2681,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             }
             out.add(item);
         }
-        if (injectCachedByPendingOffsets(out, existingIds)) {
+        if (injectCachedByPendingOffsets(out, existingIds, subjectKey)) {
             changed = true;
         }
         if (!sawZipCard) {
@@ -2721,12 +2723,17 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         return base;
     }
 
-    private static boolean injectCachedByPendingOffsets(ArrayList<Object> out, HashSet<Long> existingIds) {
+    private static boolean injectCachedByPendingOffsets(ArrayList<Object> out, HashSet<Long> existingIds, String subjectKey) {
         if (out == null) return false;
+        String prefix = null;
+        if (subjectKey != null && !subjectKey.isEmpty()) {
+            prefix = subjectKey + "|";
+        }
         boolean changed = false;
         for (Map.Entry<String, Integer> entry : new ArrayList<>(OFFSET_INSERT_INDEX.entrySet())) {
             String key = entry.getKey();
             if (key == null || key.isEmpty()) continue;
+            if (prefix != null && !key.startsWith(prefix)) continue;
             ArrayList<Object> cached = FOLD_CACHE_BY_OFFSET.get(key);
             if (cached == null || cached.isEmpty()) continue;
             int idx = entry.getValue() == null ? out.size() : entry.getValue();
@@ -2746,10 +2753,6 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             }
         }
         if (changed) {
-            String subjectKey = getCurrentSubjectKey();
-            if (subjectKey == null) {
-                subjectKey = deriveSubjectKeyFromList(out);
-            }
             if (subjectKey != null) {
                 SUBJECT_EXPANDED.put(subjectKey, Boolean.TRUE);
             }
@@ -2857,6 +2860,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
 
     private static void prefetchFoldList(List<?> list) {
         if (list == null || list.isEmpty()) return;
+        String subjectKey = updateScopeKeyFromList(list);
         int max = list.size();
         int found = 0;
         int seenR1 = 0;
@@ -2874,7 +2878,6 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             }
             if (!isZipCard(item)) continue;
             found++;
-            String subjectKey = getCurrentSubjectKey();
             if (subjectKey != null) {
                 SUBJECT_HAS_FOLD.put(subjectKey, Boolean.TRUE);
             }
@@ -2884,7 +2887,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                 rootId = findPrevCommentRootId(list, i);
             }
             log("prefetch fold card idx=" + i + " offset=" + offset + " root=" + rootId);
-            tryAutoFetchFoldList(offset, getCurrentSubjectKey(), rootId);
+            tryAutoFetchFoldList(offset, subjectKey, rootId);
         }
         if (found > 1) {
             log("prefetch fold cards total=" + found);
@@ -2894,10 +2897,13 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         }
     }
 
-    private static List<Object> getCachedFoldListForZip(Object zipCard, String offset, Boolean desc) {
+    private static List<Object> getCachedFoldListForZip(Object zipCard, String offset, Boolean desc, String subjectKey) {
         ArrayList<Object> cached = null;
         if (offset != null && !offset.isEmpty()) {
-            cached = FOLD_CACHE_BY_OFFSET.get(offset);
+            String key = resolveOffsetKey(offset, subjectKey);
+            if (key != null) {
+                cached = FOLD_CACHE_BY_OFFSET.get(key);
+            }
         }
         if (cached == null || cached.isEmpty()) {
             long rootId = getZipCardRootId(zipCard);
@@ -2928,8 +2934,8 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
 
     private static void tryAutoFetchFoldList(String offset, String subjectKey, long rootId) {
         if (offset == null || offset.isEmpty()) return;
-        String key = makeOffsetKey(offset, subjectKey);
-        if (FOLD_CACHE_BY_OFFSET.containsKey(offset) || (key != null && FOLD_CACHE_BY_OFFSET.containsKey(key))) {
+        String key = resolveOffsetKey(offset, subjectKey);
+        if (key != null && FOLD_CACHE_BY_OFFSET.containsKey(key)) {
             return;
         }
         String fetchKey = key == null ? offset : key;
@@ -2944,7 +2950,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             LAST_SUBJECT_KEY = realSubjectKey;
         }
         final String extra = LAST_EXTRA;
-        final long rootIdFinal = rootId != 0L ? rootId : getRootForOffset(offset);
+        final long rootIdFinal = rootId != 0L ? rootId : getRootForOffset(offset, subjectKey);
         new Thread(new Runnable() {
             @Override
             public void run() {
@@ -3243,6 +3249,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                 clearFoldCaches();
             }
             LAST_SUBJECT_KEY = key;
+            LAST_SCOPE_KEY = null;
         }
     }
 
@@ -3255,8 +3262,54 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                 clearFoldCaches();
             }
             LAST_SUBJECT_KEY = key;
+            LAST_SCOPE_KEY = null;
         }
         return key;
+    }
+
+    private static String getCurrentScopeKey() {
+        if (LAST_SCOPE_KEY != null) return LAST_SCOPE_KEY;
+        String subjectKey = getCurrentSubjectKey();
+        if (subjectKey != null && !subjectKey.isEmpty()) {
+            LAST_SCOPE_KEY = subjectKey;
+        }
+        return subjectKey;
+    }
+
+    private static String updateScopeKeyFromList(List<?> list) {
+        String subjectKey = getCurrentSubjectKey();
+        if (subjectKey == null) {
+            subjectKey = deriveSubjectKeyFromList(list);
+        }
+        if (subjectKey == null || subjectKey.isEmpty()) {
+            LAST_SCOPE_KEY = null;
+            return null;
+        }
+        long root = detectSingleRootId(list);
+        String scopeKey = root > 0 ? subjectKey + "|r:" + root : subjectKey;
+        LAST_SCOPE_KEY = scopeKey;
+        return scopeKey;
+    }
+
+    private static long detectSingleRootId(List<?> list) {
+        if (list == null || list.isEmpty()) return 0L;
+        long root = 0L;
+        int found = 0;
+        int max = Math.min(20, list.size());
+        for (int i = 0; i < max; i++) {
+            Object item = list.get(i);
+            if (!isCommentItem(item)) continue;
+            long r = getRootId(item);
+            if (r == 0L) r = getId(item);
+            if (r == 0L) continue;
+            if (root == 0L) {
+                root = r;
+            } else if (root != r) {
+                return 0L;
+            }
+            found++;
+        }
+        return found >= 3 ? root : 0L;
     }
 
     private static void clearFoldCaches() {
@@ -3272,6 +3325,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         FOOTER_RETRY_COUNT.clear();
         FOOTER_RETRY_PENDING.clear();
         AUTO_EXPAND_ZIP.clear();
+        LAST_SCOPE_KEY = null;
     }
 
     private static String deriveSubjectKeyFromList(List<?> list) {
@@ -3341,8 +3395,8 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         if (offset == null || offset.isEmpty()) return null;
         String key = makeOffsetKey(offset, subjectKey);
         if (key != null && FOLD_CACHE_BY_OFFSET.containsKey(key)) return key;
-        if (FOLD_CACHE_BY_OFFSET.containsKey(offset)) return offset;
         if (subjectKey == null || subjectKey.isEmpty()) {
+            if (FOLD_CACHE_BY_OFFSET.containsKey(offset)) return offset;
             String suffix = "|" + offset;
             String found = null;
             for (String k : FOLD_CACHE_BY_OFFSET.keySet()) {
@@ -3355,10 +3409,26 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         return key;
     }
 
-    private static long getRootForOffset(String offset) {
+    private static long getRootForOffset(String offset, String scopeKey) {
         if (offset == null || offset.isEmpty()) return 0L;
+        String key = makeOffsetKey(offset, scopeKey);
+        if (key != null) {
+            Long v = OFFSET_TO_ROOT.get(key);
+            if (v != null) return v;
+        }
+        if (scopeKey != null && !scopeKey.isEmpty()) return 0L;
         Long v = OFFSET_TO_ROOT.get(offset);
         return v == null ? 0L : v;
+    }
+
+    private static void putRootForOffset(String offset, String scopeKey, long rootId) {
+        if (offset == null || offset.isEmpty() || rootId == 0L) return;
+        String key = makeOffsetKey(offset, scopeKey);
+        if (key != null) {
+            OFFSET_TO_ROOT.put(key, rootId);
+            return;
+        }
+        OFFSET_TO_ROOT.put(offset, rootId);
     }
 
     private static boolean isCommentItem(Object item) {
@@ -4445,7 +4515,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
     }
 
     private static boolean scheduleFooterRetry(String offset) {
-        String key = makeOffsetKey(offset, getCurrentSubjectKey());
+        String key = makeOffsetKey(offset, getCurrentScopeKey());
         if (key == null) key = offset;
         if (key == null || key.isEmpty()) return false;
         final String finalKey = key;
@@ -4468,7 +4538,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
     }
 
     private static void clearFooterRetry(String offset) {
-        String key = makeOffsetKey(offset, getCurrentSubjectKey());
+        String key = makeOffsetKey(offset, getCurrentScopeKey());
         if (key == null) key = offset;
         if (key == null || key.isEmpty()) return;
         FOOTER_RETRY_COUNT.remove(key);
