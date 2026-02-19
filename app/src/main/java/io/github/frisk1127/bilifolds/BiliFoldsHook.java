@@ -969,6 +969,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         if (targets.isEmpty()) return;
         int changed = 0;
         int total = 0;
+        boolean logged = DEBUG_LIKE_LOGGED.putIfAbsent(id, Boolean.TRUE) == null;
         for (View v : targets) {
             if (v == null) continue;
             total++;
@@ -983,8 +984,29 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             if (v.getAlpha() < 1f) {
                 v.setAlpha(1f);
             }
+            if (logged) {
+                String idName = "";
+                int vid = v.getId();
+                if (vid != View.NO_ID) {
+                    try {
+                        idName = v.getResources().getResourceEntryName(vid);
+                    } catch (Throwable ignored) {
+                    }
+                }
+                CharSequence desc = v.getContentDescription();
+                Object tag = v.getTag();
+                String tagCls = tag == null ? "null" : tag.getClass().getName();
+                log("like.state id=" + id
+                        + " view=" + v.getClass().getSimpleName()
+                        + " idName=" + idName
+                        + " desc=" + (desc == null ? "" : desc)
+                        + " enabled=" + v.isEnabled()
+                        + " clickable=" + v.isClickable()
+                        + " hasClick=" + v.hasOnClickListeners()
+                        + " tag=" + tagCls);
+            }
         }
-        if (changed > 0 && DEBUG_LIKE_LOGGED.putIfAbsent(id, Boolean.TRUE) == null) {
+        if (changed > 0 && !logged) {
             log("enable like for folded id=" + id + " total=" + total + " changed=" + changed);
         }
     }
