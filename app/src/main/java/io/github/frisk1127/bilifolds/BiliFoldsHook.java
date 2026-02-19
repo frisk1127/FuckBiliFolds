@@ -64,6 +64,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
     private static final ConcurrentHashMap<String, Boolean> DEBUG_H0_CLICK_LOGGED = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<Long, Boolean> DEBUG_LIKE_FORCE_LOGGED = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<Long, Boolean> DEBUG_REPLY_FORCE_LOGGED = new ConcurrentHashMap<>();
+    private static final ConcurrentHashMap<Long, Boolean> DEBUG_LIKE_REFRESH_LOGGED = new ConcurrentHashMap<>();
     private static final ThreadLocal<Long> CLICK_FOLDED_ID = new ThreadLocal<>();
     private static final ThreadLocal<java.util.ArrayDeque<Long>> CLICK_ID_STACK = new ThreadLocal<>();
     private static final Set<Object> AUTO_EXPAND_ZIP = java.util.Collections.newSetFromMap(new java.util.WeakHashMap<Object, Boolean>());
@@ -1296,6 +1297,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                     } finally {
                         if (folded) {
                             popClickFoldedId();
+                            scheduleLikeRefresh(clickId);
                         }
                     }
                 }
@@ -1364,6 +1366,46 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         if (id == 0L) return;
         if (DEBUG_REPLY_FORCE_LOGGED.putIfAbsent(id, Boolean.TRUE) != null) return;
         log("reply.force folded id=" + id + " method=" + method);
+    }
+
+    private static void scheduleLikeRefresh(long id) {
+        if (id == 0L) return;
+        postToMainDelayed(new Runnable() {
+            @Override
+            public void run() {
+                refreshLikeState(id, "like.refresh.1");
+            }
+        }, 180L);
+        postToMainDelayed(new Runnable() {
+            @Override
+            public void run() {
+                refreshLikeState(id, "like.refresh.2");
+            }
+        }, 800L);
+    }
+
+    private static void refreshLikeState(long id, String tag) {
+        Object adapter = LAST_COMMENT_ADAPTER == null ? null : LAST_COMMENT_ADAPTER.get();
+        if (adapter == null) return;
+        try {
+            Object differ = XposedHelpers.getObjectField(adapter, "c");
+            Object listObj = differ == null ? null : XposedHelpers.callMethod(differ, "a");
+            if (!(listObj instanceof List)) {
+                XposedHelpers.callMethod(adapter, "notifyDataSetChanged");
+                return;
+            }
+            List<?> list = (List<?>) listObj;
+            int idx = findCommentIndexById(list, id);
+            if (idx >= 0) {
+                XposedHelpers.callMethod(adapter, "notifyItemChanged", idx);
+            } else {
+                XposedHelpers.callMethod(adapter, "notifyDataSetChanged");
+            }
+            if (DEBUG_LIKE_REFRESH_LOGGED.putIfAbsent(id, Boolean.TRUE) == null) {
+                log(tag + " folded id=" + id + " idx=" + idx + " size=" + list.size());
+            }
+        } catch (Throwable ignored) {
+        }
     }
 
     private static int markReplyControlDeep(Object obj, long commentId, Set<Object> visited, int depth) {
@@ -3130,6 +3172,17 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
 
     private static boolean isCommentItem(Object item) {
         return item != null && "com.bilibili.app.comment3.data.model.CommentItem".equals(item.getClass().getName());
+    }
+
+    private static int findCommentIndexById(List<?> list, long id) {
+        if (list == null || id == 0L) return -1;
+        for (int i = 0; i < list.size(); i++) {
+            Object item = list.get(i);
+            if (!isCommentItem(item)) continue;
+            long cid = getId(item);
+            if (cid == id) return i;
+        }
+        return -1;
     }
 
     private static long getCreateTime(Object item) {
