@@ -59,6 +59,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
     private static final ConcurrentHashMap<Long, Boolean> DEBUG_MARK_PLACE_LOGGED = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<Long, Boolean> DEBUG_MARK_MORE_LOGGED = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<Long, Boolean> DEBUG_MARK_LAYOUT_LOGGED = new ConcurrentHashMap<>();
+    private static final ConcurrentHashMap<Long, Boolean> DEBUG_LIKE_LOGGED = new ConcurrentHashMap<>();
     private static final Set<Object> AUTO_EXPAND_ZIP = java.util.Collections.newSetFromMap(new java.util.WeakHashMap<Object, Boolean>());
 
     private static final String AUTO_EXPAND_TEXT = "\u5df2\u81ea\u52a8\u5c55\u5f00\u6298\u53e0\u8bc4\u8bba";
@@ -266,6 +267,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                         if (!applyFoldMarkToHolder(holder, id)) {
                             applyFoldMarkToView((View) itemViewObj, id);
                         }
+                        ensureFoldedActionsClickable((View) itemViewObj, id);
                     } catch (Throwable ignored) {
                     }
                 }
@@ -924,6 +926,45 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         return findViewByIdNameContains(root, new String[]{"like", "thumb", "up"});
     }
 
+    private static void ensureFoldedActionsClickable(View root, long id) {
+        if (root == null || id == 0L) return;
+        ViewGroup actionRow = findActionRow(root);
+        if (actionRow == null) return;
+        ArrayList<View> targets = new ArrayList<>();
+        collectViewsByIdNameContains(actionRow, new String[]{
+                "like", "thumb", "up", "dislike", "down", "zan"
+        }, targets);
+        collectViewsByDescContains(actionRow, new String[]{
+                "\u70b9\u8d5e",
+                "\u8d5e",
+                "\u559c\u6b22",
+                "\u70b9\u8e29",
+                "\u8e29",
+                "\u4e0d\u559c\u6b22"
+        }, targets);
+        if (targets.isEmpty()) return;
+        int changed = 0;
+        int total = 0;
+        for (View v : targets) {
+            if (v == null) continue;
+            total++;
+            if (!v.isEnabled()) {
+                v.setEnabled(true);
+                changed++;
+            }
+            if (!v.isClickable()) {
+                v.setClickable(true);
+                changed++;
+            }
+            if (v.getAlpha() < 1f) {
+                v.setAlpha(1f);
+            }
+        }
+        if (changed > 0 && DEBUG_LIKE_LOGGED.putIfAbsent(id, Boolean.TRUE) == null) {
+            log("enable like for folded id=" + id + " total=" + total + " changed=" + changed);
+        }
+    }
+
     private static View findViewByIdNameContains(View root, String[] keys) {
         if (root == null || keys == null) return null;
         int id = root.getId();
@@ -946,6 +987,51 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             }
         }
         return null;
+    }
+
+    private static void collectViewsByIdNameContains(View root, String[] keys, ArrayList<View> out) {
+        if (root == null || keys == null || out == null) return;
+        int id = root.getId();
+        if (id != View.NO_ID) {
+            try {
+                String name = root.getResources().getResourceEntryName(id);
+                if (name != null) {
+                    for (String k : keys) {
+                        if (k != null && name.contains(k)) {
+                            out.add(root);
+                            break;
+                        }
+                    }
+                }
+            } catch (Throwable ignored) {
+            }
+        }
+        if (root instanceof ViewGroup) {
+            ViewGroup group = (ViewGroup) root;
+            for (int i = 0; i < group.getChildCount(); i++) {
+                collectViewsByIdNameContains(group.getChildAt(i), keys, out);
+            }
+        }
+    }
+
+    private static void collectViewsByDescContains(View root, String[] keywords, ArrayList<View> out) {
+        if (root == null || keywords == null || out == null) return;
+        CharSequence desc = root.getContentDescription();
+        if (desc != null) {
+            String s = desc.toString();
+            for (String k : keywords) {
+                if (k != null && s.contains(k)) {
+                    out.add(root);
+                    break;
+                }
+            }
+        }
+        if (root instanceof ViewGroup) {
+            ViewGroup group = (ViewGroup) root;
+            for (int i = 0; i < group.getChildCount(); i++) {
+                collectViewsByDescContains(group.getChildAt(i), keywords, out);
+            }
+        }
     }
 
     private static boolean addOverlayMark(final ViewGroup host, final View anchor, final TextView mark) {
