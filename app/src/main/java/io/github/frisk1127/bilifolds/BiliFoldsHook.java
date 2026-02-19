@@ -82,6 +82,12 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
     private static volatile WeakReference<Object> LAST_SUBJECT_ID = new WeakReference<>(null);
     private static volatile String LAST_SUBJECT_KEY = null;
     private static volatile String LAST_SCOPE_KEY = null;
+    private static volatile String ZIP_CARD_CLASS = "vv.r1";
+    private static volatile String COMMENT_HOLDER_CLASS = "com.bilibili.app.comment3.ui.holder.h0";
+    private static volatile String LIKE_LISTENER_CLASS = "com.bilibili.app.comment3.ui.holder.m";
+    private static final Set<String> HOOKED_ZIP_CLASSES = Collections.newSetFromMap(new ConcurrentHashMap<String, Boolean>());
+    private static final Set<String> HOOKED_LIKE_LISTENERS = Collections.newSetFromMap(new ConcurrentHashMap<String, Boolean>());
+    private static final Set<String> HOOKED_HOLDER_TRACE = Collections.newSetFromMap(new ConcurrentHashMap<String, Boolean>());
     private static volatile String LAST_EXTRA = null;
     private static volatile Object LAST_SORT_MODE = null;
     private static volatile WeakReference<Object> LAST_COMMENT_ADAPTER = new WeakReference<>(null);
@@ -272,14 +278,23 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
     }
 
     private static void hookLikeClickListener(ClassLoader cl) {
-        Class<?> c = XposedHelpers.findClassIfExists(
-                "com.bilibili.app.comment3.ui.holder.m",
-                cl
-        );
+        String name = LIKE_LISTENER_CLASS;
+        if (name == null || name.isEmpty()) {
+            name = "com.bilibili.app.comment3.ui.holder.m";
+        }
+        Class<?> c = XposedHelpers.findClassIfExists(name, cl);
         if (c == null) {
-            log("like listener class not found");
+            log(name + " class not found");
             return;
         }
+        LIKE_LISTENER_CLASS = name;
+        hookLikeClickListenerByClass(c);
+    }
+
+    private static void hookLikeClickListenerByClass(Class<?> c) {
+        if (c == null) return;
+        String name = c.getName();
+        if (!HOOKED_LIKE_LISTENERS.add(name)) return;
         XposedBridge.hookAllMethods(c, "onClick", new XC_MethodHook() {
             @Override
             protected void beforeHookedMethod(MethodHookParam param) {
@@ -328,12 +343,20 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
     }
 
     private static void hookH0ClickTrace(ClassLoader cl) {
-        Class<?> c = XposedHelpers.findClassIfExists(
-                "com.bilibili.app.comment3.ui.holder.h0",
-                cl
-        );
+        String name = COMMENT_HOLDER_CLASS;
+        if (name == null || name.isEmpty()) {
+            name = "com.bilibili.app.comment3.ui.holder.h0";
+        }
+        hookH0ClickTraceByName(name, cl);
+    }
+
+    private static void hookH0ClickTraceByName(String name, ClassLoader cl) {
+        if (name == null || name.isEmpty()) return;
+        if (!HOOKED_HOLDER_TRACE.add(name)) return;
+        Class<?> c = XposedHelpers.findClassIfExists(name, cl);
         if (c == null) {
-            log("h0 class not found");
+            log(name + " class not found");
+            HOOKED_HOLDER_TRACE.remove(name);
             return;
         }
         java.lang.reflect.Method[] methods = c.getDeclaredMethods();
@@ -515,6 +538,13 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                             XposedHelpers.setAdditionalInstanceField(itemViewObj, "BiliFoldsCommentItem", item);
                         } catch (Throwable ignored) {
                         }
+                        String holderName = holder.getClass().getName();
+                        if (holderName != null && !holderName.isEmpty() && !holderName.equals(COMMENT_HOLDER_CLASS)) {
+                            COMMENT_HOLDER_CLASS = holderName;
+                            ClassLoader hcl = holder.getClass().getClassLoader();
+                            if (hcl == null) hcl = APP_CL;
+                            hookH0ClickTraceByName(holderName, hcl);
+                        }
                         ensureFoldedActionsClickable((View) itemViewObj, id, item);
                         if (!Boolean.TRUE.equals(FOLDED_IDS.get(id))) {
                             clearFoldMarkFromView((View) itemViewObj);
@@ -555,7 +585,8 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
     private static boolean applyFoldMarkToHolder(Object holder, long id) {
         if (holder == null) return false;
         String cls = holder.getClass().getName();
-        if (!"com.bilibili.app.comment3.ui.holder.h0".equals(cls)) {
+        String target = COMMENT_HOLDER_CLASS;
+        if (target != null && !target.isEmpty() && !target.equals(cls)) {
             return false;
         }
         try {
@@ -1325,6 +1356,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             Object raw = XposedHelpers.getObjectField(listenerInfo, "mOnClickListener");
             if (!(raw instanceof View.OnClickListener)) return;
             final View.OnClickListener orig = (View.OnClickListener) raw;
+            ensureLikeListenerHooked(orig);
             View.OnClickListener wrapper = new View.OnClickListener() {
                 @Override
                 public void onClick(View view) {
@@ -1374,6 +1406,14 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             XposedHelpers.setAdditionalInstanceField(v, "BiliFoldsClickWrapped", Boolean.TRUE);
         } catch (Throwable ignored) {
         }
+    }
+
+    private static void ensureLikeListenerHooked(View.OnClickListener listener) {
+        if (listener == null) return;
+        String name = listener.getClass().getName();
+        if (name == null || name.isEmpty()) return;
+        LIKE_LISTENER_CLASS = name;
+        hookLikeClickListenerByClass(listener.getClass());
     }
 
     private static Object getAdditionalObject(Object obj, String key) {
@@ -2629,19 +2669,38 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
     }
 
     private static void hookZipCardView(ClassLoader cl) {
-        Class<?> c = XposedHelpers.findClassIfExists("vv.r1", cl);
+        String name = ZIP_CARD_CLASS;
+        if (name == null || name.isEmpty()) {
+            name = "vv.r1";
+        }
+        hookZipCardViewByName(name, cl, true);
+    }
+
+    private static void hookZipCardViewByName(String name, ClassLoader cl, boolean logIfMissing) {
+        if (name == null || name.isEmpty()) return;
+        ZIP_CARD_CLASS = name;
+        if (!HOOKED_ZIP_CLASSES.add(name)) return;
+        Class<?> c = XposedHelpers.findClassIfExists(name, cl);
         if (c == null) {
-            log("vv.r1 class not found");
+            if (logIfMissing) {
+                log(name + " class not found");
+            }
+            HOOKED_ZIP_CLASSES.remove(name);
             return;
         }
-        XposedHelpers.findAndHookMethod(c, "h", new XC_MethodHook() {
+        hookZipCardViewByClass(c);
+    }
+
+    private static void hookZipCardViewByClass(Class<?> c) {
+        if (c == null) return;
+        XposedBridge.hookAllMethods(c, "h", new XC_MethodHook() {
             @Override
             protected void afterHookedMethod(MethodHookParam param) {
                 if (!isAutoExpand(param.thisObject)) return;
                 param.setResult(AUTO_EXPAND_TEXT);
             }
         });
-        XposedHelpers.findAndHookMethod(c, "f", new XC_MethodHook() {
+        XposedBridge.hookAllMethods(c, "f", new XC_MethodHook() {
             @Override
             protected void afterHookedMethod(MethodHookParam param) {
                 if (!isAutoExpand(param.thisObject)) return;
@@ -2727,7 +2786,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             if (isCommentItem(item)) {
                 debugLogCommentFold(item);
             }
-            if (item != null && "vv.r1".equals(item.getClass().getName())) {
+            if (isZipCardClass(item)) {
                 String text = callStringMethod(item, "h");
                 String offset = getZipCardOffset(item);
                 if ((text != null && (text.contains("\u5c55\u5f00\u66f4\u591a\u8bc4\u8bba") || text.contains("\u5c55\u5f00\u66f4\u591a"))) ||
@@ -2923,7 +2982,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         log("prefetch list size=" + list.size() + " scanMax=" + max);
         for (int i = 0; i < max; i++) {
             Object item = list.get(i);
-            if (item != null && "vv.r1".equals(item.getClass().getName())) {
+            if (isZipCardClass(item)) {
                 seenR1++;
                 String text = callStringMethod(item, "h");
                 String offset = getZipCardOffset(item);
@@ -4125,7 +4184,24 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
     }
 
     private static boolean isZipCard(Object item) {
-        if (item == null || !"vv.r1".equals(item.getClass().getName())) return false;
+        if (item == null) return false;
+        String cls = item.getClass().getName();
+        String known = ZIP_CARD_CLASS;
+        if (known != null && !known.isEmpty() && known.equals(cls)) {
+            return looksLikeZipCard(item);
+        }
+        if (looksLikeZipCard(item)) {
+            ZIP_CARD_CLASS = cls;
+            ClassLoader cl = item.getClass().getClassLoader();
+            if (cl == null) cl = APP_CL;
+            hookZipCardViewByName(cls, cl, false);
+            return true;
+        }
+        return false;
+    }
+
+    private static boolean looksLikeZipCard(Object item) {
+        if (item == null) return false;
         String text = callStringMethod(item, "h");
         if (text != null) {
             String t = text.trim();
@@ -4137,6 +4213,16 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         }
         String offset = getZipCardOffset(item);
         return offset != null && !offset.isEmpty();
+    }
+
+    private static boolean isZipCardClass(Object item) {
+        if (item == null) return false;
+        String cls = item.getClass().getName();
+        String known = ZIP_CARD_CLASS;
+        if (known != null && !known.isEmpty()) {
+            return known.equals(cls);
+        }
+        return "vv.r1".equals(cls);
     }
 
     private static long getZipCardRootId(Object zipCard) {
@@ -4295,8 +4381,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                 score += 10;
                 continue;
             }
-            String cn = item.getClass().getName();
-            if ("vv.r1".equals(cn)) {
+            if (isZipCardClass(item)) {
                 score += 8;
                 continue;
             }
@@ -4536,14 +4621,25 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
     }
 
     private static boolean isFooterCard(Object item) {
-        if (item == null || !"vv.r1".equals(item.getClass().getName())) return false;
+        if (item == null) return false;
         String text = callStringMethod(item, "h");
         if (text == null) return false;
         String t = text.trim();
-        return t.contains("\u518d\u600e\u4e48\u627e\u4e5f\u6ca1\u6709")
+        boolean isFooter = t.contains("\u518d\u600e\u4e48\u627e\u4e5f\u6ca1\u6709")
                 || t.contains("\u6ca1\u6709\u66f4\u591a\u8bc4\u8bba")
                 || t.contains("\u6ca1\u6709\u66f4\u591a\u4e86")
                 || t.contains("\u8fd9\u91cc\u662f\u8bc4\u8bba\u533a");
+        if (!isFooter) return false;
+        String cls = item.getClass().getName();
+        String known = ZIP_CARD_CLASS;
+        if (known == null || known.isEmpty()) {
+            ZIP_CARD_CLASS = cls;
+            ClassLoader cl = item.getClass().getClassLoader();
+            if (cl == null) cl = APP_CL;
+            hookZipCardViewByName(cls, cl, false);
+            return true;
+        }
+        return known.equals(cls);
     }
 
     private static void postToMain(Runnable r) {
