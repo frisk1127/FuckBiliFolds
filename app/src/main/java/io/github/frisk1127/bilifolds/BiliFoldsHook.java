@@ -1036,26 +1036,24 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
 
     private static boolean addMarkAfterAnchor(ViewGroup group, View anchor, TextView mark) {
         if (group == null || anchor == null || mark == null) return false;
-        if (group instanceof androidx.constraintlayout.widget.ConstraintLayout) {
+        if (isConstraintLayout(group)) {
             if (anchor.getId() == View.NO_ID) {
                 anchor.setId(View.generateViewId());
             }
-            androidx.constraintlayout.widget.ConstraintLayout.LayoutParams lp =
-                    new androidx.constraintlayout.widget.ConstraintLayout.LayoutParams(
-                            ViewGroup.LayoutParams.WRAP_CONTENT,
-                            ViewGroup.LayoutParams.WRAP_CONTENT
-                    );
-            lp.startToEnd = anchor.getId();
-            lp.topToTop = anchor.getId();
-            lp.bottomToBottom = anchor.getId();
-            if (anchor instanceof TextView) {
-                lp.baselineToBaseline = anchor.getId();
+            Object lp = newConstraintLayoutParams(group);
+            if (lp instanceof ViewGroup.LayoutParams) {
+                setConstraintId(lp, "startToEnd", anchor.getId());
+                setConstraintId(lp, "topToTop", anchor.getId());
+                setConstraintId(lp, "bottomToBottom", anchor.getId());
+                if (anchor instanceof TextView) {
+                    setConstraintId(lp, "baselineToBaseline", anchor.getId());
+                }
+                setMarginStart(lp, dp(group.getContext(), 6));
+                mark.setLayoutParams((ViewGroup.LayoutParams) lp);
+                mark.setId(View.generateViewId());
+                group.addView(mark);
+                return true;
             }
-            lp.setMarginStart(dp(group.getContext(), 6));
-            mark.setLayoutParams(lp);
-            mark.setId(View.generateViewId());
-            group.addView(mark);
-            return true;
         }
         int index = group.indexOfChild(anchor);
         if (index < 0) index = group.getChildCount();
@@ -1065,29 +1063,27 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
 
     private static boolean addMarkAtRowEnd(ViewGroup group, TextView base, TextView mark) {
         if (group == null || mark == null) return false;
-        if (group instanceof androidx.constraintlayout.widget.ConstraintLayout) {
+        if (isConstraintLayout(group)) {
             if (group.getId() == View.NO_ID) {
                 group.setId(View.generateViewId());
             }
             if (base != null && base.getId() == View.NO_ID) {
                 base.setId(View.generateViewId());
             }
-            androidx.constraintlayout.widget.ConstraintLayout.LayoutParams lp =
-                    new androidx.constraintlayout.widget.ConstraintLayout.LayoutParams(
-                            ViewGroup.LayoutParams.WRAP_CONTENT,
-                            ViewGroup.LayoutParams.WRAP_CONTENT
-                    );
-            lp.endToEnd = group.getId();
-            lp.topToTop = group.getId();
-            lp.bottomToBottom = group.getId();
-            if (base != null) {
-                lp.baselineToBaseline = base.getId();
+            Object lp = newConstraintLayoutParams(group);
+            if (lp instanceof ViewGroup.LayoutParams) {
+                setConstraintId(lp, "endToEnd", group.getId());
+                setConstraintId(lp, "topToTop", group.getId());
+                setConstraintId(lp, "bottomToBottom", group.getId());
+                if (base != null) {
+                    setConstraintId(lp, "baselineToBaseline", base.getId());
+                }
+                setMarginEnd(lp, dp(group.getContext(), 6));
+                mark.setLayoutParams((ViewGroup.LayoutParams) lp);
+                mark.setId(View.generateViewId());
+                group.addView(mark);
+                return true;
             }
-            lp.setMarginEnd(dp(group.getContext(), 6));
-            mark.setLayoutParams(lp);
-            mark.setId(View.generateViewId());
-            group.addView(mark);
-            return true;
         }
         if (group instanceof android.widget.LinearLayout) {
             android.widget.LinearLayout ll = (android.widget.LinearLayout) group;
@@ -1108,7 +1104,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
 
     private static boolean addMarkBeforeView(ViewGroup group, View before, TextView mark, TextView base) {
         if (group == null || before == null || mark == null) return false;
-        if (group instanceof androidx.constraintlayout.widget.ConstraintLayout) {
+        if (isConstraintLayout(group)) {
             if (group.getId() == View.NO_ID) {
                 group.setId(View.generateViewId());
             }
@@ -1118,22 +1114,20 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             if (base != null && base.getId() == View.NO_ID) {
                 base.setId(View.generateViewId());
             }
-            androidx.constraintlayout.widget.ConstraintLayout.LayoutParams lp =
-                    new androidx.constraintlayout.widget.ConstraintLayout.LayoutParams(
-                            ViewGroup.LayoutParams.WRAP_CONTENT,
-                            ViewGroup.LayoutParams.WRAP_CONTENT
-                    );
-            lp.endToStart = before.getId();
-            lp.topToTop = group.getId();
-            lp.bottomToBottom = group.getId();
-            if (base != null) {
-                lp.baselineToBaseline = base.getId();
+            Object lp = newConstraintLayoutParams(group);
+            if (lp instanceof ViewGroup.LayoutParams) {
+                setConstraintId(lp, "endToStart", before.getId());
+                setConstraintId(lp, "topToTop", group.getId());
+                setConstraintId(lp, "bottomToBottom", group.getId());
+                if (base != null) {
+                    setConstraintId(lp, "baselineToBaseline", base.getId());
+                }
+                setMarginEnd(lp, dp(group.getContext(), 6));
+                mark.setLayoutParams((ViewGroup.LayoutParams) lp);
+                mark.setId(View.generateViewId());
+                group.addView(mark);
+                return true;
             }
-            lp.setMarginEnd(dp(group.getContext(), 6));
-            mark.setLayoutParams(lp);
-            mark.setId(View.generateViewId());
-            group.addView(mark);
-            return true;
         }
         int index = group.indexOfChild(before);
         if (index >= 0) {
@@ -1145,6 +1139,68 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             return true;
         }
         return false;
+    }
+
+    private static boolean isConstraintLayout(ViewGroup group) {
+        if (group == null) return false;
+        return "androidx.constraintlayout.widget.ConstraintLayout".equals(group.getClass().getName());
+    }
+
+    private static Object newConstraintLayoutParams(ViewGroup group) {
+        if (group == null) return null;
+        ClassLoader cl = group.getClass().getClassLoader();
+        if (cl == null) {
+            cl = APP_CL;
+        }
+        Class<?> lpCls = XposedHelpers.findClassIfExists(
+                "androidx.constraintlayout.widget.ConstraintLayout$LayoutParams",
+                cl
+        );
+        if (lpCls == null) return null;
+        try {
+            return XposedHelpers.newInstance(lpCls,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT
+            );
+        } catch (Throwable ignored) {
+        }
+        try {
+            return XposedHelpers.newInstance(lpCls);
+        } catch (Throwable ignored) {
+        }
+        return null;
+    }
+
+    private static void setConstraintId(Object lp, String field, int id) {
+        if (lp == null || field == null) return;
+        try {
+            XposedHelpers.setIntField(lp, field, id);
+        } catch (Throwable ignored) {
+        }
+    }
+
+    private static void setMarginStart(Object lp, int value) {
+        if (lp == null) return;
+        try {
+            XposedHelpers.callMethod(lp, "setMarginStart", value);
+            return;
+        } catch (Throwable ignored) {
+        }
+        if (lp instanceof ViewGroup.MarginLayoutParams) {
+            ((ViewGroup.MarginLayoutParams) lp).leftMargin = value;
+        }
+    }
+
+    private static void setMarginEnd(Object lp, int value) {
+        if (lp == null) return;
+        try {
+            XposedHelpers.callMethod(lp, "setMarginEnd", value);
+            return;
+        } catch (Throwable ignored) {
+        }
+        if (lp instanceof ViewGroup.MarginLayoutParams) {
+            ((ViewGroup.MarginLayoutParams) lp).rightMargin = value;
+        }
     }
 
     private static View findMoreActionView(ViewGroup root) {
