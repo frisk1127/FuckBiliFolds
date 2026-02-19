@@ -1226,6 +1226,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                 v.setAlpha(1f);
             }
             wrapFoldedActionClick(v);
+            captureLikeTextTemplate(v);
             applyLikeUiOverrideIfNeeded(v, id);
             if (logged) {
                 String idName = "";
@@ -1426,6 +1427,8 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         FOLDED_LIKE_STATE.put(id, newLiked);
         if (count != null) {
             FOLDED_LIKE_COUNT.put(id, count);
+        } else {
+            FOLDED_LIKE_COUNT.remove(id);
         }
         applyLikeUiToView(view, newLiked, count);
         if (DEBUG_LIKE_UI_LOGGED.putIfAbsent(id, Boolean.TRUE) == null) {
@@ -1453,11 +1456,11 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         }
         if (count != null && v instanceof TextView) {
             TextView tv = (TextView) v;
-            CharSequence oldText = tv.getText();
-            String newText = replaceFirstNumber(oldText, count);
-            if (newText != null) {
-                tv.setText(newText);
-            }
+            String template = getLikeTextTemplate(tv);
+            String newText = formatLikeText(template, count);
+            tv.setText(newText == null ? "" : newText);
+        } else if (count == null && v instanceof TextView) {
+            ((TextView) v).setText("");
         }
     }
 
@@ -1478,11 +1481,11 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         CharSequence text = tv.getText();
         Integer count = parseFirstNumber(text);
         if (count == null) {
-            return liked ? 1 : 0;
+            return liked ? 1 : null;
         }
         int delta = liked ? 1 : -1;
         int next = count + delta;
-        if (next < 0) next = 0;
+        if (next <= 0) return null;
         return next;
     }
 
@@ -1529,6 +1532,42 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             return value > 0 ? v : "";
         }
         return s.substring(0, start) + v + s.substring(end);
+    }
+
+    private static void captureLikeTextTemplate(View v) {
+        if (!(v instanceof TextView)) return;
+        if (!isLikeView(v)) return;
+        TextView tv = (TextView) v;
+        CharSequence text = tv.getText();
+        if (text == null) return;
+        String s = text.toString();
+        if (parseFirstNumber(s) == null) return;
+        try {
+            XposedHelpers.setAdditionalInstanceField(tv, "BiliFoldsLikeTemplate", s);
+        } catch (Throwable ignored) {
+        }
+    }
+
+    private static String getLikeTextTemplate(TextView tv) {
+        if (tv == null) return null;
+        try {
+            Object v = XposedHelpers.getAdditionalInstanceField(tv, "BiliFoldsLikeTemplate");
+            if (v instanceof String) return (String) v;
+        } catch (Throwable ignored) {
+        }
+        CharSequence text = tv.getText();
+        String s = text == null ? "" : text.toString();
+        if (parseFirstNumber(s) != null) return s;
+        return null;
+    }
+
+    private static String formatLikeText(String template, int count) {
+        if (count <= 0) return "";
+        if (template != null) {
+            String replaced = replaceFirstNumber(template, count);
+            if (replaced != null && !replaced.isEmpty()) return replaced;
+        }
+        return " " + count;
     }
 
     private static boolean isLikeView(View v) {
