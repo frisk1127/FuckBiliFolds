@@ -326,6 +326,10 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         if (tvI != null && containsText(tvI, "\u67e5\u770b\u5bf9\u8bdd")) {
             TextView mark = newFoldMark(markRoot, tvI);
             setMarkId(mark, id);
+            if (addOverlayMarkRightOf(actionRow, tvI, mark)) {
+                logMarkOnce(id, "mark overlay right of viewConv(h0)");
+                return true;
+            }
             View more = findMoreActionView(actionRow);
             View like = findLikeActionView(actionRow);
             if (more != null && addOverlayMarkLeftOf(actionRow, more, mark)) {
@@ -350,6 +354,10 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         } else if (tvH != null && containsText(tvH, "\u67e5\u770b\u5bf9\u8bdd")) {
             TextView mark = newFoldMark(markRoot, tvH);
             setMarkId(mark, id);
+            if (addOverlayMarkRightOf(actionRow, tvH, mark)) {
+                logMarkOnce(id, "mark overlay right of viewConv(h0)");
+                return true;
+            }
             View more = findMoreActionView(actionRow);
             View like = findLikeActionView(actionRow);
             if (more != null && addOverlayMarkLeftOf(actionRow, more, mark)) {
@@ -399,6 +407,12 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         TextView base = (anchor instanceof TextView) ? (TextView) anchor : findFirstTextView(actionRow);
         TextView mark = newFoldMark(markRoot, base);
         setMarkId(mark, id);
+        View comment = findCommentActionView(actionRow);
+        if (comment != null && addOverlayMarkRightOf(actionRow, comment, mark)) {
+            logMarkMoreOnce(id, actionRow, comment, base, "h0.comment");
+            logMarkOnce(id, "mark overlay right of comment(h0)");
+            return true;
+        }
         View more = findMoreActionView(actionRow);
         View like = findLikeActionView(actionRow);
         if (more != null && addOverlayMarkLeftOf(actionRow, more, mark)) {
@@ -435,6 +449,10 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         if (viewConv != null) {
             TextView mark = newFoldMark(markRoot, viewConv);
             setMarkId(mark, id);
+            if (addOverlayMarkRightOf(actionRow, viewConv, mark)) {
+                logMarkOnce(id, "mark overlay right of viewConv (fallback)");
+                return true;
+            }
             View more = findMoreActionView(actionRow);
             View like = findLikeActionView(actionRow);
             if (more != null && addOverlayMarkLeftOf(actionRow, more, mark)) {
@@ -472,6 +490,12 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         TextView base = (anchor instanceof TextView) ? (TextView) anchor : findFirstTextView(actionRow);
         TextView mark = newFoldMark(markRoot, base);
         setMarkId(mark, id);
+        View comment = findCommentActionView(actionRow);
+        if (comment != null && addOverlayMarkRightOf(actionRow, comment, mark)) {
+            logMarkMoreOnce(id, actionRow, comment, base, "fallback.comment");
+            logMarkOnce(id, "mark overlay right of comment (fallback)");
+            return true;
+        }
         View more = findMoreActionView(actionRow);
         View like = findLikeActionView(actionRow);
         if (more != null && addOverlayMarkLeftOf(actionRow, more, mark)) {
@@ -821,6 +845,17 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         return findViewByIdNameContains(root, new String[]{"more", "menu", "overflow"});
     }
 
+    private static View findCommentActionView(ViewGroup root) {
+        if (root == null) return null;
+        View v = findViewByDescContains(root, new String[]{
+                "\u8bc4\u8bba",
+                "\u56de\u590d",
+                "\u5bf9\u8bdd"
+        });
+        if (v != null) return v;
+        return findViewByIdNameContains(root, new String[]{"comment", "reply", "chat", "msg"});
+    }
+
     private static View findLikeActionView(ViewGroup root) {
         if (root == null) return null;
         View v = findViewByDescContains(root, new String[]{
@@ -977,6 +1012,78 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                     + " mark=" + markW + "x" + markH
                     + " x=" + l + " y=" + t);
         }
+        mark.layout(l, t, l + markW, t + markH);
+    }
+
+    private static boolean addOverlayMarkRightOf(final ViewGroup host, final View target, final TextView mark) {
+        if (host == null || target == null || mark == null) return false;
+        try {
+            Object old = XposedHelpers.getAdditionalInstanceField(host, "BiliFoldsOverlayMark");
+            if (old instanceof View) {
+                try {
+                    android.view.ViewOverlay ov = host.getOverlay();
+                    if (ov instanceof android.view.ViewGroupOverlay) {
+                        ((android.view.ViewGroupOverlay) ov).remove((View) old);
+                    }
+                } catch (Throwable ignored) {
+                }
+            }
+        } catch (Throwable ignored) {
+        }
+        mark.setLayoutParams(new ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+        ));
+        mark.setId(View.generateViewId());
+        host.postDelayed(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    android.view.ViewOverlay ov = host.getOverlay();
+                    if (ov instanceof android.view.ViewGroupOverlay) {
+                        ((android.view.ViewGroupOverlay) ov).add(mark);
+                    }
+                } catch (Throwable ignored) {
+                }
+                try {
+                    XposedHelpers.setAdditionalInstanceField(host, "BiliFoldsOverlayMark", mark);
+                } catch (Throwable ignored) {
+                }
+                positionOverlayRightOf(host, target, mark);
+            }
+        }, 80);
+        return true;
+    }
+
+    private static void positionOverlayRightOf(ViewGroup host, View target, TextView mark) {
+        if (host == null || target == null || mark == null) return;
+        View resolved = resolveAnchorView(target);
+        if (resolved != null) target = resolved;
+        int hostW = host.getWidth();
+        int hostH = host.getHeight();
+        if (hostW <= 0 || hostH <= 0) return;
+        int markW = mark.getWidth();
+        int markH = mark.getHeight();
+        if (markW <= 0 || markH <= 0) {
+            int wSpec = View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED);
+            int hSpec = View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED);
+            mark.measure(wSpec, hSpec);
+            markW = mark.getMeasuredWidth();
+            markH = mark.getMeasuredHeight();
+        }
+        int[] hp = new int[2];
+        int[] tp = new int[2];
+        host.getLocationOnScreen(hp);
+        target.getLocationOnScreen(tp);
+        float targetX = tp[0] - hp[0];
+        float targetY = tp[1] - hp[1];
+        float x = targetX + target.getWidth() + dp(host.getContext(), 6);
+        if (x + markW > hostW) x = Math.max(0, hostW - markW - dp(host.getContext(), 6));
+        float y = targetY + (target.getHeight() - markH) / 2.0f;
+        if (y < 0) y = 0;
+        if (y + markH > hostH) y = Math.max(0, hostH - markH);
+        int l = Math.round(x);
+        int t = Math.round(y);
         mark.layout(l, t, l + markW, t + markH);
     }
 
