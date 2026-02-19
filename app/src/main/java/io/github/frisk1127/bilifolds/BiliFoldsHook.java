@@ -66,8 +66,11 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
     private static final ConcurrentHashMap<Long, Boolean> DEBUG_REPLY_FORCE_LOGGED = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<Long, Boolean> DEBUG_LIKE_REFRESH_LOGGED = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<Long, Boolean> DEBUG_LIKE_OPT_LOGGED = new ConcurrentHashMap<>();
+    private static final ConcurrentHashMap<Long, Boolean> DEBUG_LIKE_UI_LOGGED = new ConcurrentHashMap<>();
     private static final ThreadLocal<Long> CLICK_FOLDED_ID = new ThreadLocal<>();
     private static final ThreadLocal<java.util.ArrayDeque<Long>> CLICK_ID_STACK = new ThreadLocal<>();
+    private static final ConcurrentHashMap<Long, Boolean> FOLDED_LIKE_STATE = new ConcurrentHashMap<>();
+    private static final ConcurrentHashMap<Long, Integer> FOLDED_LIKE_COUNT = new ConcurrentHashMap<>();
     private static final Set<Object> AUTO_EXPAND_ZIP = java.util.Collections.newSetFromMap(new java.util.WeakHashMap<Object, Boolean>());
 
     private static final String AUTO_EXPAND_TEXT = "\u5df2\u81ea\u52a8\u5c55\u5f00\u6298\u53e0\u8bc4\u8bba";
@@ -1223,6 +1226,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                 v.setAlpha(1f);
             }
             wrapFoldedActionClick(v);
+            applyLikeUiOverrideIfNeeded(v, id);
             if (logged) {
                 String idName = "";
                 int vid = v.getId();
@@ -1303,15 +1307,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                     } finally {
                         if (folded) {
                             popClickFoldedId();
-                            Boolean newLiked = optimisticLikeUpdate(clickId, view, preSelected);
-                            if (newLiked != null) {
-                                try {
-                                    view.setSelected(newLiked);
-                                    view.setActivated(newLiked);
-                                } catch (Throwable ignored) {
-                                }
-                            }
-                            scheduleLikeRefresh(clickId);
+                            applyLikeUiOverrideAfterClick(view, clickId, preSelected);
                         }
                     }
                 }
@@ -1420,6 +1416,148 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             }
         } catch (Throwable ignored) {
         }
+    }
+
+    private static void applyLikeUiOverrideAfterClick(View view, long id, boolean preSelected) {
+        if (view == null || id == 0L) return;
+        Boolean newLiked = computeLikedState(view, preSelected);
+        if (newLiked == null) return;
+        Integer count = computeLikeCount(view, newLiked);
+        FOLDED_LIKE_STATE.put(id, newLiked);
+        if (count != null) {
+            FOLDED_LIKE_COUNT.put(id, count);
+        }
+        applyLikeUiToView(view, newLiked, count);
+        if (DEBUG_LIKE_UI_LOGGED.putIfAbsent(id, Boolean.TRUE) == null) {
+            log("like.ui folded id=" + id + " liked=" + newLiked + " count=" + (count == null ? "?" : count));
+        }
+    }
+
+    private static void applyLikeUiOverrideIfNeeded(View v, long id) {
+        if (v == null || id == 0L) return;
+        if (!isLikeView(v)) return;
+        Boolean liked = FOLDED_LIKE_STATE.get(id);
+        Integer count = FOLDED_LIKE_COUNT.get(id);
+        if (liked == null && count == null) return;
+        applyLikeUiToView(v, liked, count);
+    }
+
+    private static void applyLikeUiToView(View v, Boolean liked, Integer count) {
+        if (v == null) return;
+        if (liked != null) {
+            try {
+                v.setSelected(liked);
+                v.setActivated(liked);
+            } catch (Throwable ignored) {
+            }
+        }
+        if (count != null && v instanceof TextView) {
+            TextView tv = (TextView) v;
+            CharSequence oldText = tv.getText();
+            String newText = replaceFirstNumber(oldText, count);
+            if (newText != null) {
+                tv.setText(newText);
+            }
+        }
+    }
+
+    private static Boolean computeLikedState(View v, boolean preSelected) {
+        if (v == null) return null;
+        boolean postSelected = false;
+        try {
+            postSelected = v.isSelected() || v.isActivated();
+        } catch (Throwable ignored) {
+        }
+        if (postSelected != preSelected) return postSelected;
+        return !preSelected;
+    }
+
+    private static Integer computeLikeCount(View v, boolean liked) {
+        if (!(v instanceof TextView)) return null;
+        TextView tv = (TextView) v;
+        CharSequence text = tv.getText();
+        Integer count = parseFirstNumber(text);
+        if (count == null) {
+            return liked ? 1 : 0;
+        }
+        int delta = liked ? 1 : -1;
+        int next = count + delta;
+        if (next < 0) next = 0;
+        return next;
+    }
+
+    private static Integer parseFirstNumber(CharSequence text) {
+        if (text == null) return null;
+        String s = text.toString();
+        int len = s.length();
+        int start = -1;
+        int end = -1;
+        for (int i = 0; i < len; i++) {
+            char c = s.charAt(i);
+            if (c >= '0' && c <= '9') {
+                if (start < 0) start = i;
+                end = i + 1;
+            } else if (start >= 0) {
+                break;
+            }
+        }
+        if (start < 0 || end <= start) return null;
+        try {
+            return Integer.parseInt(s.substring(start, end));
+        } catch (Throwable ignored) {
+            return null;
+        }
+    }
+
+    private static String replaceFirstNumber(CharSequence text, int value) {
+        String v = String.valueOf(Math.max(0, value));
+        if (text == null) return v;
+        String s = text.toString();
+        int len = s.length();
+        int start = -1;
+        int end = -1;
+        for (int i = 0; i < len; i++) {
+            char c = s.charAt(i);
+            if (c >= '0' && c <= '9') {
+                if (start < 0) start = i;
+                end = i + 1;
+            } else if (start >= 0) {
+                break;
+            }
+        }
+        if (start < 0) {
+            return value > 0 ? v : "";
+        }
+        return s.substring(0, start) + v + s.substring(end);
+    }
+
+    private static boolean isLikeView(View v) {
+        if (v == null) return false;
+        int id = v.getId();
+        if (id != View.NO_ID) {
+            try {
+                String name = v.getResources().getResourceEntryName(id);
+                if (name != null) {
+                    String n = name.toLowerCase();
+                    if ((n.contains("like") || n.contains("thumb") || n.contains("up") || n.contains("zan"))
+                            && !n.contains("dislike") && !n.contains("down")) {
+                        return true;
+                    }
+                }
+            } catch (Throwable ignored) {
+            }
+        }
+        try {
+            CharSequence desc = v.getContentDescription();
+            if (desc != null) {
+                String d = desc.toString();
+                if (d.contains("\u70b9\u8d5e") || d.contains("\u8d5e") || d.contains("\u559c\u6b22")) {
+                    return true;
+                }
+            }
+        } catch (Throwable ignored) {
+        }
+        return false;
     }
 
     private static int markReplyControlDeep(Object obj, long commentId, Set<Object> visited, int depth) {
