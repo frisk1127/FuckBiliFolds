@@ -63,6 +63,9 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
     private static final ConcurrentHashMap<Long, Boolean> DEBUG_CLICK_LOGGED = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<String, Boolean> DEBUG_H0_CLICK_LOGGED = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<Long, Boolean> DEBUG_LIKE_FORCE_LOGGED = new ConcurrentHashMap<>();
+    private static final ConcurrentHashMap<Long, Boolean> DEBUG_REPLY_FORCE_LOGGED = new ConcurrentHashMap<>();
+    private static final ThreadLocal<Long> CLICK_FOLDED_ID = new ThreadLocal<>();
+    private static final ThreadLocal<java.util.ArrayDeque<Long>> CLICK_ID_STACK = new ThreadLocal<>();
     private static final Set<Object> AUTO_EXPAND_ZIP = java.util.Collections.newSetFromMap(new java.util.WeakHashMap<Object, Boolean>());
 
     private static final String AUTO_EXPAND_TEXT = "\u5df2\u81ea\u52a8\u5c55\u5f00\u6298\u53e0\u8bc4\u8bba";
@@ -131,24 +134,27 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         XposedBridge.hookAllMethods(c, "getBlocked", new XC_MethodHook() {
             @Override
             protected void beforeHookedMethod(MethodHookParam param) {
-                if (isReplyControlMarked(param.thisObject)) {
+                if (isReplyControlMarked(param.thisObject) || isClickForceActive()) {
                     param.setResult(false);
+                    logReplyForceOnce("getBlocked");
                 }
             }
         });
         XposedBridge.hookAllMethods(c, "getInvisible", new XC_MethodHook() {
             @Override
             protected void beforeHookedMethod(MethodHookParam param) {
-                if (isReplyControlMarked(param.thisObject)) {
+                if (isReplyControlMarked(param.thisObject) || isClickForceActive()) {
                     param.setResult(false);
+                    logReplyForceOnce("getInvisible");
                 }
             }
         });
         XposedBridge.hookAllMethods(c, "getAction", new XC_MethodHook() {
             @Override
             protected void beforeHookedMethod(MethodHookParam param) {
-                if (isReplyControlMarked(param.thisObject)) {
+                if (isReplyControlMarked(param.thisObject) || isClickForceActive()) {
                     param.setResult(Long.MAX_VALUE);
+                    logReplyForceOnce("getAction");
                 }
             }
         });
@@ -282,18 +288,35 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                 }
                 if (id == 0L) return;
                 if (!Boolean.TRUE.equals(FOLDED_IDS.get(id))) return;
+                pushClickFoldedId(id);
                 if (isCommentItem(item)) {
                     forceUnfold(item);
                 }
                 int marked = 0;
-                marked += markReplyControlDeep(param.thisObject, id, new HashSet<Object>(), 2);
-                marked += markReplyControlDeep(item, id, new HashSet<Object>(), 2);
-                marked += markReplyControlDeep(v, id, new HashSet<Object>(), 1);
+                marked += markReplyControlDeep(param.thisObject, id, new HashSet<Object>(), 3);
+                marked += markReplyControlDeep(item, id, new HashSet<Object>(), 3);
+                marked += markReplyControlDeep(v, id, new HashSet<Object>(), 2);
                 if (DEBUG_LIKE_FORCE_LOGGED.putIfAbsent(id, Boolean.TRUE) == null) {
                     log("like.force folded id=" + id
                             + " listener=" + param.thisObject.getClass().getName()
                             + " marked=" + marked);
                 }
+            }
+
+            @Override
+            protected void afterHookedMethod(MethodHookParam param) {
+                if (param.args == null || param.args.length == 0) return;
+                if (!(param.args[0] instanceof View)) return;
+                View v = (View) param.args[0];
+                long id = getAdditionalLong(v, "BiliFoldsCommentId");
+                Object item = getAdditionalObject(v, "BiliFoldsCommentItem");
+                if (id == 0L && isCommentItem(item)) {
+                    long cid = getId(item);
+                    if (cid != 0L) id = cid;
+                }
+                if (id == 0L) return;
+                if (!Boolean.TRUE.equals(FOLDED_IDS.get(id))) return;
+                popClickFoldedId();
             }
         });
     }
@@ -355,10 +378,11 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                     if (id == 0L) return;
                     if (!Boolean.TRUE.equals(FOLDED_IDS.get(id))) return;
                     Object item = getAdditionalObject(holder, "BiliFoldsCommentItem");
+                    pushClickFoldedId(id);
                     if (isCommentItem(item)) {
                         forceUnfold(item);
                     }
-                    markReplyControlDeep(holder, id, new HashSet<Object>(), 2);
+                    markReplyControlDeep(holder, id, new HashSet<Object>(), 3);
                     String key = id + ":" + method.getName();
                     if (DEBUG_H0_CLICK_LOGGED.putIfAbsent(key, Boolean.TRUE) != null) return;
                     String viewInfo = "";
@@ -382,6 +406,43 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                         }
                     }
                     log("h0.click folded id=" + id + " method=" + method.getName() + viewInfo);
+                }
+
+                @Override
+                protected void afterHookedMethod(MethodHookParam param) {
+                    long id = 0L;
+                    Object holder = param.thisObject;
+                    if (holder == null && param.args != null && param.args.length > 0 && c.isInstance(param.args[0])) {
+                        holder = param.args[0];
+                    }
+                    if (holder != null) {
+                        id = getAdditionalLong(holder, "BiliFoldsCommentId");
+                        if (id == 0L) {
+                            Object item = getAdditionalObject(holder, "BiliFoldsCommentItem");
+                            if (isCommentItem(item)) {
+                                long cid = getId(item);
+                                if (cid != 0L) id = cid;
+                            }
+                        }
+                    }
+                    if (id == 0L && param.args != null) {
+                        for (Object a : param.args) {
+                            if (!(a instanceof View)) continue;
+                            id = getAdditionalLong(a, "BiliFoldsCommentId");
+                            if (id != 0L) break;
+                            Object item = getAdditionalObject(a, "BiliFoldsCommentItem");
+                            if (isCommentItem(item)) {
+                                long cid = getId(item);
+                                if (cid != 0L) {
+                                    id = cid;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    if (id == 0L) return;
+                    if (!Boolean.TRUE.equals(FOLDED_IDS.get(id))) return;
+                    popClickFoldedId();
                 }
             });
         }
@@ -1205,21 +1266,38 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                 public void onClick(View view) {
                     long clickId = getAdditionalLong(view, "BiliFoldsCommentId");
                     Object item = getAdditionalObject(view, "BiliFoldsCommentItem");
+                    if (!isCommentItem(item)) {
+                        try {
+                            Object tag = view.getTag();
+                            if (isCommentItem(tag)) item = tag;
+                        } catch (Throwable ignored) {
+                        }
+                    }
                     if (clickId == 0L && isCommentItem(item)) {
                         long cid = getId(item);
                         if (cid != 0L) clickId = cid;
                     }
                     boolean folded = clickId != 0L && Boolean.TRUE.equals(FOLDED_IDS.get(clickId));
-                    if (folded && isCommentItem(item)) {
-                        forceUnfold(item);
+                    if (folded) {
+                        pushClickFoldedId(clickId);
+                        if (isCommentItem(item)) {
+                            forceUnfold(item);
+                        }
+                        markReplyControlDeep(view, clickId, new HashSet<Object>(), 2);
+                        if (DEBUG_CLICK_LOGGED.putIfAbsent(clickId, Boolean.TRUE) == null) {
+                            String listener = orig.getClass().getName();
+                            log("like.click folded id=" + clickId
+                                    + " view=" + view.getClass().getSimpleName()
+                                    + " listener=" + listener);
+                        }
                     }
-                    if (folded && DEBUG_CLICK_LOGGED.putIfAbsent(clickId, Boolean.TRUE) == null) {
-                        String listener = orig.getClass().getName();
-                        log("like.click folded id=" + clickId
-                                + " view=" + view.getClass().getSimpleName()
-                                + " listener=" + listener);
+                    try {
+                        orig.onClick(view);
+                    } finally {
+                        if (folded) {
+                            popClickFoldedId();
+                        }
                     }
-                    orig.onClick(view);
                 }
             };
             XposedHelpers.setObjectField(listenerInfo, "mOnClickListener", wrapper);
@@ -1247,6 +1325,47 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         return 0L;
     }
 
+    private static void pushClickFoldedId(long id) {
+        if (id == 0L) return;
+        java.util.ArrayDeque<Long> stack = CLICK_ID_STACK.get();
+        if (stack == null) {
+            stack = new java.util.ArrayDeque<>();
+            CLICK_ID_STACK.set(stack);
+        }
+        stack.push(id);
+        CLICK_FOLDED_ID.set(id);
+    }
+
+    private static void popClickFoldedId() {
+        java.util.ArrayDeque<Long> stack = CLICK_ID_STACK.get();
+        if (stack == null || stack.isEmpty()) return;
+        stack.pop();
+        Long id = stack.peek();
+        if (id == null) {
+            CLICK_FOLDED_ID.remove();
+            CLICK_ID_STACK.remove();
+        } else {
+            CLICK_FOLDED_ID.set(id);
+        }
+    }
+
+    private static boolean isClickForceActive() {
+        Long id = CLICK_FOLDED_ID.get();
+        return id != null && id != 0L && Boolean.TRUE.equals(FOLDED_IDS.get(id));
+    }
+
+    private static long getClickFoldedId() {
+        Long id = CLICK_FOLDED_ID.get();
+        return id == null ? 0L : id;
+    }
+
+    private static void logReplyForceOnce(String method) {
+        long id = getClickFoldedId();
+        if (id == 0L) return;
+        if (DEBUG_REPLY_FORCE_LOGGED.putIfAbsent(id, Boolean.TRUE) != null) return;
+        log("reply.force folded id=" + id + " method=" + method);
+    }
+
     private static int markReplyControlDeep(Object obj, long commentId, Set<Object> visited, int depth) {
         if (obj == null || depth < 0) return 0;
         if (visited == null) visited = new HashSet<>();
@@ -1254,13 +1373,20 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         visited.add(obj);
         Class<?> cls = obj.getClass();
         String clsName = cls.getName();
-        if (clsName.startsWith("java.") || clsName.startsWith("android.") || clsName.startsWith("kotlin.")) {
+        if (clsName.startsWith("java.") || clsName.startsWith("android.")) {
+            return 0;
+        }
+        if (clsName.startsWith("kotlin.") && !clsName.contains("Lazy")) {
             return 0;
         }
         int marked = 0;
         if (clsName.contains("ReplyControl")) {
             markReplyControl(obj, commentId);
             return 1;
+        }
+        Object lazyValue = tryGetLazyValue(obj);
+        if (lazyValue != null) {
+            marked += markReplyControlDeep(lazyValue, commentId, visited, depth - 1);
         }
         Field[] fields = cls.getDeclaredFields();
         for (Field f : fields) {
@@ -1277,12 +1403,22 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                     markReplyControl(v, commentId);
                     marked++;
                 }
+                Object lazy = tryGetLazyValue(v);
+                if (lazy != null) {
+                    marked += markReplyControlDeep(lazy, commentId, visited, depth - 1);
+                }
                 if (depth > 0) {
                     if (v instanceof List) {
                         List<?> list = (List<?>) v;
                         int max = Math.min(8, list.size());
                         for (int i = 0; i < max; i++) {
                             marked += markReplyControlDeep(list.get(i), commentId, visited, depth - 1);
+                        }
+                    } else if (v != null && v.getClass().isArray()) {
+                        int len = java.lang.reflect.Array.getLength(v);
+                        int max = Math.min(8, len);
+                        for (int i = 0; i < max; i++) {
+                            marked += markReplyControlDeep(java.lang.reflect.Array.get(v, i), commentId, visited, depth - 1);
                         }
                     } else if (!typeName.startsWith("java.") && !typeName.startsWith("android.") && !typeName.startsWith("kotlin.")) {
                         marked += markReplyControlDeep(v, commentId, visited, depth - 1);
@@ -1292,6 +1428,19 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             }
         }
         return marked;
+    }
+
+    private static Object tryGetLazyValue(Object obj) {
+        if (obj == null) return null;
+        String name = obj.getClass().getName();
+        if (!name.contains("Lazy")) return null;
+        try {
+            java.lang.reflect.Method m = obj.getClass().getDeclaredMethod("getValue");
+            m.setAccessible(true);
+            return m.invoke(obj);
+        } catch (Throwable ignored) {
+        }
+        return null;
     }
 
     private static View findViewByIdNameContains(View root, String[] keys) {
