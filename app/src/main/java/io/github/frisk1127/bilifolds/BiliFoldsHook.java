@@ -62,6 +62,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
     private static final ConcurrentHashMap<Long, Boolean> DEBUG_LIKE_LOGGED = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<Long, Boolean> DEBUG_CLICK_LOGGED = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<String, Boolean> DEBUG_H0_CLICK_LOGGED = new ConcurrentHashMap<>();
+    private static final ConcurrentHashMap<Long, Boolean> DEBUG_LIKE_FORCE_LOGGED = new ConcurrentHashMap<>();
     private static final Set<Object> AUTO_EXPAND_ZIP = java.util.Collections.newSetFromMap(new java.util.WeakHashMap<Object, Boolean>());
 
     private static final String AUTO_EXPAND_TEXT = "\u5df2\u81ea\u52a8\u5c55\u5f00\u6298\u53e0\u8bc4\u8bba";
@@ -101,6 +102,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         safeHook("hookDetailListDataSource", new Runnable() { @Override public void run() { hookDetailListDataSource(APP_CL); } });
         safeHook("hookCommentListAdapter", new Runnable() { @Override public void run() { hookCommentListAdapter(APP_CL); } });
         safeHook("hookH0ClickTrace", new Runnable() { @Override public void run() { hookH0ClickTrace(APP_CL); } });
+        safeHook("hookLikeClickListener", new Runnable() { @Override public void run() { hookLikeClickListener(APP_CL); } });
     }
 
     private static void safeHook(String name, Runnable r) {
@@ -257,6 +259,45 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         hookCommentViewHolderBind(c, cl);
     }
 
+    private static void hookLikeClickListener(ClassLoader cl) {
+        Class<?> c = XposedHelpers.findClassIfExists(
+                "com.bilibili.app.comment3.ui.holder.m",
+                cl
+        );
+        if (c == null) {
+            log("like listener class not found");
+            return;
+        }
+        XposedBridge.hookAllMethods(c, "onClick", new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam param) {
+                if (param.args == null || param.args.length == 0) return;
+                if (!(param.args[0] instanceof View)) return;
+                View v = (View) param.args[0];
+                long id = getAdditionalLong(v, "BiliFoldsCommentId");
+                Object item = getAdditionalObject(v, "BiliFoldsCommentItem");
+                if (id == 0L && isCommentItem(item)) {
+                    long cid = getId(item);
+                    if (cid != 0L) id = cid;
+                }
+                if (id == 0L) return;
+                if (!Boolean.TRUE.equals(FOLDED_IDS.get(id))) return;
+                if (isCommentItem(item)) {
+                    forceUnfold(item);
+                }
+                int marked = 0;
+                marked += markReplyControlDeep(param.thisObject, id, new HashSet<Object>(), 2);
+                marked += markReplyControlDeep(item, id, new HashSet<Object>(), 2);
+                marked += markReplyControlDeep(v, id, new HashSet<Object>(), 1);
+                if (DEBUG_LIKE_FORCE_LOGGED.putIfAbsent(id, Boolean.TRUE) == null) {
+                    log("like.force folded id=" + id
+                            + " listener=" + param.thisObject.getClass().getName()
+                            + " marked=" + marked);
+                }
+            }
+        });
+    }
+
     private static void hookH0ClickTrace(ClassLoader cl) {
         Class<?> c = XposedHelpers.findClassIfExists(
                 "com.bilibili.app.comment3.ui.holder.h0",
@@ -313,6 +354,11 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                     }
                     if (id == 0L) return;
                     if (!Boolean.TRUE.equals(FOLDED_IDS.get(id))) return;
+                    Object item = getAdditionalObject(holder, "BiliFoldsCommentItem");
+                    if (isCommentItem(item)) {
+                        forceUnfold(item);
+                    }
+                    markReplyControlDeep(holder, id, new HashSet<Object>(), 2);
                     String key = id + ":" + method.getName();
                     if (DEBUG_H0_CLICK_LOGGED.putIfAbsent(key, Boolean.TRUE) != null) return;
                     String viewInfo = "";
@@ -1199,6 +1245,53 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         } catch (Throwable ignored) {
         }
         return 0L;
+    }
+
+    private static int markReplyControlDeep(Object obj, long commentId, Set<Object> visited, int depth) {
+        if (obj == null || depth < 0) return 0;
+        if (visited == null) visited = new HashSet<>();
+        if (visited.contains(obj)) return 0;
+        visited.add(obj);
+        Class<?> cls = obj.getClass();
+        String clsName = cls.getName();
+        if (clsName.startsWith("java.") || clsName.startsWith("android.") || clsName.startsWith("kotlin.")) {
+            return 0;
+        }
+        int marked = 0;
+        if (clsName.contains("ReplyControl")) {
+            markReplyControl(obj, commentId);
+            return 1;
+        }
+        Field[] fields = cls.getDeclaredFields();
+        for (Field f : fields) {
+            if (f == null) continue;
+            try {
+                f.setAccessible(true);
+                Object v = f.get(obj);
+                if (v == null) continue;
+                if (isCommentItem(v)) {
+                    forceUnfold(v);
+                }
+                String typeName = v.getClass().getName();
+                if (typeName.contains("ReplyControl")) {
+                    markReplyControl(v, commentId);
+                    marked++;
+                }
+                if (depth > 0) {
+                    if (v instanceof List) {
+                        List<?> list = (List<?>) v;
+                        int max = Math.min(8, list.size());
+                        for (int i = 0; i < max; i++) {
+                            marked += markReplyControlDeep(list.get(i), commentId, visited, depth - 1);
+                        }
+                    } else if (!typeName.startsWith("java.") && !typeName.startsWith("android.") && !typeName.startsWith("kotlin.")) {
+                        marked += markReplyControlDeep(v, commentId, visited, depth - 1);
+                    }
+                }
+            } catch (Throwable ignored) {
+            }
+        }
+        return marked;
     }
 
     private static View findViewByIdNameContains(View root, String[] keys) {
