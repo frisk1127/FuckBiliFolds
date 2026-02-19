@@ -57,6 +57,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
     private static final ConcurrentHashMap<Long, Boolean> DEBUG_MARK_POS_LOGGED = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<Long, Boolean> DEBUG_MARK_PLACE_LOGGED = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<Long, Boolean> DEBUG_MARK_MORE_LOGGED = new ConcurrentHashMap<>();
+    private static final ConcurrentHashMap<Long, Boolean> DEBUG_MARK_LAYOUT_LOGGED = new ConcurrentHashMap<>();
     private static final Set<Object> AUTO_EXPAND_ZIP = java.util.Collections.newSetFromMap(new java.util.WeakHashMap<Object, Boolean>());
 
     private static final String AUTO_EXPAND_TEXT = "\u5df2\u81ea\u52a8\u5c55\u5f00\u6298\u53e0\u8bc4\u8bba";
@@ -326,6 +327,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         if (tvI != null && containsText(tvI, "\u67e5\u770b\u5bf9\u8bdd")) {
             TextView mark = newFoldMark(markRoot, tvI);
             setMarkId(mark, id);
+            logActionRowLayoutOnce(id, actionRow);
             if (addOverlayMarkRightOf(actionRow, tvI, mark)) {
                 logMarkOnce(id, "mark overlay right of viewConv(h0)");
                 return true;
@@ -354,6 +356,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         } else if (tvH != null && containsText(tvH, "\u67e5\u770b\u5bf9\u8bdd")) {
             TextView mark = newFoldMark(markRoot, tvH);
             setMarkId(mark, id);
+            logActionRowLayoutOnce(id, actionRow);
             if (addOverlayMarkRightOf(actionRow, tvH, mark)) {
                 logMarkOnce(id, "mark overlay right of viewConv(h0)");
                 return true;
@@ -449,6 +452,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         if (viewConv != null) {
             TextView mark = newFoldMark(markRoot, viewConv);
             setMarkId(mark, id);
+            logActionRowLayoutOnce(id, actionRow);
             if (addOverlayMarkRightOf(actionRow, viewConv, mark)) {
                 logMarkOnce(id, "mark overlay right of viewConv (fallback)");
                 return true;
@@ -659,6 +663,56 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             sb.append("]");
         }
         log(sb.toString());
+    }
+
+    private static void logActionRowLayoutOnce(final long id, final ViewGroup group) {
+        if (id == 0L || group == null) return;
+        if (DEBUG_MARK_LAYOUT_LOGGED.putIfAbsent(id, Boolean.TRUE) != null) return;
+        group.post(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    int[] gp = new int[2];
+                    group.getLocationOnScreen(gp);
+                    StringBuilder sb = new StringBuilder();
+                    sb.append("mark.layout id=").append(id)
+                            .append(" rowCls=").append(group.getClass().getName())
+                            .append(" rowW=").append(group.getWidth())
+                            .append(" rowH=").append(group.getHeight())
+                            .append(" child=").append(group.getChildCount());
+                    for (int i = 0; i < group.getChildCount(); i++) {
+                        View v = group.getChildAt(i);
+                        if (v == null) continue;
+                        int[] vp = new int[2];
+                        v.getLocationOnScreen(vp);
+                        int x = vp[0] - gp[0];
+                        int y = vp[1] - gp[1];
+                        String idName = "";
+                        try {
+                            if (v.getId() != View.NO_ID) {
+                                idName = v.getResources().getResourceEntryName(v.getId());
+                            }
+                        } catch (Throwable ignored) {
+                        }
+                        CharSequence text = (v instanceof TextView) ? ((TextView) v).getText() : null;
+                        CharSequence desc = v.getContentDescription();
+                        sb.append(" [").append(i)
+                                .append(":").append(v.getClass().getSimpleName())
+                                .append(" id=").append(idName)
+                                .append(" vis=").append(v.getVisibility())
+                                .append(" x=").append(x)
+                                .append(" y=").append(y)
+                                .append(" w=").append(v.getWidth())
+                                .append(" h=").append(v.getHeight());
+                        if (text != null) sb.append(" t=").append(text);
+                        if (desc != null) sb.append(" d=").append(desc);
+                        sb.append("]");
+                    }
+                    log(sb.toString());
+                } catch (Throwable ignored) {
+                }
+            }
+        });
     }
 
     private static View findActionAnchor(ViewGroup actionRow) {
