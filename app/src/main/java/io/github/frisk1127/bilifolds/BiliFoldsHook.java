@@ -61,6 +61,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
     private static final ConcurrentHashMap<Long, Boolean> DEBUG_MARK_LAYOUT_LOGGED = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<Long, Boolean> DEBUG_LIKE_LOGGED = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<Long, Boolean> DEBUG_CLICK_LOGGED = new ConcurrentHashMap<>();
+    private static final ConcurrentHashMap<String, Boolean> DEBUG_H0_CLICK_LOGGED = new ConcurrentHashMap<>();
     private static final Set<Object> AUTO_EXPAND_ZIP = java.util.Collections.newSetFromMap(new java.util.WeakHashMap<Object, Boolean>());
 
     private static final String AUTO_EXPAND_TEXT = "\u5df2\u81ea\u52a8\u5c55\u5f00\u6298\u53e0\u8bc4\u8bba";
@@ -99,6 +100,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         safeHook("hookZipDataSource", new Runnable() { @Override public void run() { hookZipDataSource(APP_CL); } });
         safeHook("hookDetailListDataSource", new Runnable() { @Override public void run() { hookDetailListDataSource(APP_CL); } });
         safeHook("hookCommentListAdapter", new Runnable() { @Override public void run() { hookCommentListAdapter(APP_CL); } });
+        safeHook("hookH0ClickTrace", new Runnable() { @Override public void run() { hookH0ClickTrace(APP_CL); } });
     }
 
     private static void safeHook(String name, Runnable r) {
@@ -255,6 +257,90 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         hookCommentViewHolderBind(c, cl);
     }
 
+    private static void hookH0ClickTrace(ClassLoader cl) {
+        Class<?> c = XposedHelpers.findClassIfExists(
+                "com.bilibili.app.comment3.ui.holder.h0",
+                cl
+        );
+        if (c == null) {
+            log("h0 class not found");
+            return;
+        }
+        java.lang.reflect.Method[] methods = c.getDeclaredMethods();
+        for (java.lang.reflect.Method m : methods) {
+            Class<?>[] pts = m.getParameterTypes();
+            if (pts == null) continue;
+            boolean maybeClick = false;
+            if (pts.length == 1 && View.class.isAssignableFrom(pts[0])) {
+                maybeClick = true;
+            } else if (pts.length == 2 && c.isAssignableFrom(pts[0]) && View.class.isAssignableFrom(pts[1])) {
+                maybeClick = true;
+            }
+            if (!maybeClick) continue;
+            final java.lang.reflect.Method method = m;
+            XposedBridge.hookMethod(method, new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam param) {
+                    long id = 0L;
+                    Object holder = param.thisObject;
+                    if (holder == null && param.args != null && param.args.length > 0 && c.isInstance(param.args[0])) {
+                        holder = param.args[0];
+                    }
+                    if (holder != null) {
+                        id = getAdditionalLong(holder, "BiliFoldsCommentId");
+                        if (id == 0L) {
+                            Object item = getAdditionalObject(holder, "BiliFoldsCommentItem");
+                            if (isCommentItem(item)) {
+                                long cid = getId(item);
+                                if (cid != 0L) id = cid;
+                            }
+                        }
+                    }
+                    if (id == 0L && param.args != null) {
+                        for (Object a : param.args) {
+                            if (!(a instanceof View)) continue;
+                            id = getAdditionalLong(a, "BiliFoldsCommentId");
+                            if (id != 0L) break;
+                            Object item = getAdditionalObject(a, "BiliFoldsCommentItem");
+                            if (isCommentItem(item)) {
+                                long cid = getId(item);
+                                if (cid != 0L) {
+                                    id = cid;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    if (id == 0L) return;
+                    if (!Boolean.TRUE.equals(FOLDED_IDS.get(id))) return;
+                    String key = id + ":" + method.getName();
+                    if (DEBUG_H0_CLICK_LOGGED.putIfAbsent(key, Boolean.TRUE) != null) return;
+                    String viewInfo = "";
+                    if (param.args != null) {
+                        for (Object a : param.args) {
+                            if (!(a instanceof View)) continue;
+                            View v = (View) a;
+                            String idName = "";
+                            int vid = v.getId();
+                            if (vid != View.NO_ID) {
+                                try {
+                                    idName = v.getResources().getResourceEntryName(vid);
+                                } catch (Throwable ignored) {
+                                }
+                            }
+                            CharSequence desc = v.getContentDescription();
+                            viewInfo = " view=" + v.getClass().getSimpleName()
+                                    + " idName=" + idName
+                                    + " desc=" + (desc == null ? "" : desc);
+                            break;
+                        }
+                    }
+                    log("h0.click folded id=" + id + " method=" + method.getName() + viewInfo);
+                }
+            });
+        }
+    }
+
     private static void hookCommentViewHolderBind(Class<?> adapterCls, ClassLoader cl) {
         Class<?> vhCls = XposedHelpers.findClassIfExists(
                 "androidx.recyclerview.widget.RecyclerView$ViewHolder",
@@ -278,14 +364,45 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                         if (!(itemViewObj instanceof View)) return;
                         Object item = getAdapterItemAt(adapterCls, pos);
                         if (!isCommentItem(item)) {
+                            try {
+                                XposedHelpers.removeAdditionalInstanceField(holder, "BiliFoldsCommentId");
+                                XposedHelpers.removeAdditionalInstanceField(holder, "BiliFoldsCommentItem");
+                            } catch (Throwable ignored) {
+                            }
+                            try {
+                                XposedHelpers.removeAdditionalInstanceField(itemViewObj, "BiliFoldsCommentId");
+                                XposedHelpers.removeAdditionalInstanceField(itemViewObj, "BiliFoldsCommentItem");
+                            } catch (Throwable ignored) {
+                            }
                             clearFoldMarkFromView((View) itemViewObj);
                             return;
                         }
                         long id = getId(item);
                         if (id == 0) {
+                            try {
+                                XposedHelpers.removeAdditionalInstanceField(holder, "BiliFoldsCommentId");
+                                XposedHelpers.removeAdditionalInstanceField(holder, "BiliFoldsCommentItem");
+                            } catch (Throwable ignored) {
+                            }
+                            try {
+                                XposedHelpers.removeAdditionalInstanceField(itemViewObj, "BiliFoldsCommentId");
+                                XposedHelpers.removeAdditionalInstanceField(itemViewObj, "BiliFoldsCommentItem");
+                            } catch (Throwable ignored) {
+                            }
                             clearFoldMarkFromView((View) itemViewObj);
                             return;
                         }
+                        try {
+                            XposedHelpers.setAdditionalInstanceField(holder, "BiliFoldsCommentId", id);
+                            XposedHelpers.setAdditionalInstanceField(holder, "BiliFoldsCommentItem", item);
+                        } catch (Throwable ignored) {
+                        }
+                        try {
+                            XposedHelpers.setAdditionalInstanceField(itemViewObj, "BiliFoldsCommentId", id);
+                            XposedHelpers.setAdditionalInstanceField(itemViewObj, "BiliFoldsCommentItem", item);
+                        } catch (Throwable ignored) {
+                        }
+                        ensureFoldedActionsClickable((View) itemViewObj, id, item);
                         if (!Boolean.TRUE.equals(FOLDED_IDS.get(id))) {
                             clearFoldMarkFromView((View) itemViewObj);
                             return;
@@ -293,7 +410,6 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                         if (!applyFoldMarkToHolder(holder, id)) {
                             applyFoldMarkToView((View) itemViewObj, id);
                         }
-                        ensureFoldedActionsClickable((View) itemViewObj, id);
                     } catch (Throwable ignored) {
                     }
                 }
@@ -952,7 +1068,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         return findViewByIdNameContains(root, new String[]{"like", "thumb", "up"});
     }
 
-    private static void ensureFoldedActionsClickable(View root, long id) {
+    private static void ensureFoldedActionsClickable(View root, long id, Object item) {
         if (root == null || id == 0L) return;
         ViewGroup actionRow = findActionRow(root);
         if (actionRow == null) return;
@@ -969,12 +1085,23 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                 "\u4e0d\u559c\u6b22"
         }, targets);
         if (targets.isEmpty()) return;
+        boolean folded = Boolean.TRUE.equals(FOLDED_IDS.get(id));
         int changed = 0;
         int total = 0;
-        boolean logged = DEBUG_LIKE_LOGGED.putIfAbsent(id, Boolean.TRUE) == null;
+        boolean logged = folded && DEBUG_LIKE_LOGGED.putIfAbsent(id, Boolean.TRUE) == null;
         for (View v : targets) {
             if (v == null) continue;
             total++;
+            try {
+                XposedHelpers.setAdditionalInstanceField(v, "BiliFoldsCommentId", id);
+                if (item != null) {
+                    XposedHelpers.setAdditionalInstanceField(v, "BiliFoldsCommentItem", item);
+                }
+            } catch (Throwable ignored) {
+            }
+            if (!folded) {
+                continue;
+            }
             if (!v.isEnabled()) {
                 v.setEnabled(true);
                 changed++;
@@ -986,7 +1113,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             if (v.getAlpha() < 1f) {
                 v.setAlpha(1f);
             }
-            wrapFoldedActionClick(v, id);
+            wrapFoldedActionClick(v);
             if (logged) {
                 String idName = "";
                 int vid = v.getId();
@@ -1009,13 +1136,13 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                         + " tag=" + tagCls);
             }
         }
-        if (changed > 0 && !logged) {
+        if (folded && changed > 0 && !logged) {
             log("enable like for folded id=" + id + " total=" + total + " changed=" + changed);
         }
     }
 
-    private static void wrapFoldedActionClick(View v, long id) {
-        if (v == null || id == 0L) return;
+    private static void wrapFoldedActionClick(View v) {
+        if (v == null) return;
         try {
             Object existing = XposedHelpers.getAdditionalInstanceField(v, "BiliFoldsClickWrapped");
             if (existing instanceof Boolean && (Boolean) existing) return;
@@ -1030,8 +1157,21 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             View.OnClickListener wrapper = new View.OnClickListener() {
                 @Override
                 public void onClick(View view) {
-                    if (DEBUG_CLICK_LOGGED.putIfAbsent(id, Boolean.TRUE) == null) {
-                        log("like.click folded id=" + id + " view=" + view.getClass().getSimpleName());
+                    long clickId = getAdditionalLong(view, "BiliFoldsCommentId");
+                    Object item = getAdditionalObject(view, "BiliFoldsCommentItem");
+                    if (clickId == 0L && isCommentItem(item)) {
+                        long cid = getId(item);
+                        if (cid != 0L) clickId = cid;
+                    }
+                    boolean folded = clickId != 0L && Boolean.TRUE.equals(FOLDED_IDS.get(clickId));
+                    if (folded && isCommentItem(item)) {
+                        forceUnfold(item);
+                    }
+                    if (folded && DEBUG_CLICK_LOGGED.putIfAbsent(clickId, Boolean.TRUE) == null) {
+                        String listener = orig.getClass().getName();
+                        log("like.click folded id=" + clickId
+                                + " view=" + view.getClass().getSimpleName()
+                                + " listener=" + listener);
                     }
                     orig.onClick(view);
                 }
@@ -1040,6 +1180,25 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             XposedHelpers.setAdditionalInstanceField(v, "BiliFoldsClickWrapped", Boolean.TRUE);
         } catch (Throwable ignored) {
         }
+    }
+
+    private static Object getAdditionalObject(Object obj, String key) {
+        if (obj == null || key == null) return null;
+        try {
+            return XposedHelpers.getAdditionalInstanceField(obj, key);
+        } catch (Throwable ignored) {
+            return null;
+        }
+    }
+
+    private static long getAdditionalLong(Object obj, String key) {
+        if (obj == null || key == null) return 0L;
+        try {
+            Object v = XposedHelpers.getAdditionalInstanceField(obj, key);
+            if (v instanceof Number) return ((Number) v).longValue();
+        } catch (Throwable ignored) {
+        }
+        return 0L;
     }
 
     private static View findViewByIdNameContains(View root, String[] keys) {
