@@ -331,7 +331,25 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                     if (adapter == null) return;
                     String aName = adapter.getClass().getName();
                     boolean maybe = aName != null && (aName.contains("bilibili") || aName.contains("comment") || aName.contains("reply"));
+                    boolean likelyComment = aName != null
+                            && (aName.toLowerCase().contains("comment") || aName.toLowerCase().contains("reply"));
                     Object holder = param.args != null && param.args.length > 0 ? param.args[0] : null;
+                    if (!likelyComment && holder != null) {
+                        String hName = holder.getClass().getName();
+                        if (hName != null) {
+                            String ln = hName.toLowerCase();
+                            if (ln.contains("comment") || ln.contains("reply")) {
+                                likelyComment = true;
+                            }
+                        }
+                    }
+                    if (!likelyComment) {
+                        if (maybe && LOG_ONCE.putIfAbsent("adapter.bind.maybe." + aName, Boolean.TRUE) == null) {
+                            String hName = holder == null ? "null" : holder.getClass().getName();
+                            log("adapter.bind maybe adapter=" + aName + " holder=" + hName);
+                        }
+                        return;
+                    }
                     int position = -1;
                     if (param.args != null && param.args.length > 1 && param.args[1] instanceof Integer) {
                         position = (Integer) param.args[1];
@@ -369,9 +387,9 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                         }
                         return;
                     }
-                    if (maybe && LOG_ONCE.putIfAbsent("adapter.bind.maybe." + aName, Boolean.TRUE) == null) {
+                    if (LOG_ONCE.putIfAbsent("adapter.bind.miss." + aName, Boolean.TRUE) == null) {
                         String hName = holder == null ? "null" : holder.getClass().getName();
-                        log("adapter.bind maybe adapter=" + aName + " holder=" + hName);
+                        log("adapter.bind miss adapter=" + aName + " holder=" + hName);
                     }
                 } catch (Throwable ignored) {
                 }
@@ -690,11 +708,16 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                 for (Field f : fields) {
                     if (f == null) continue;
                     Class<?> t = f.getType();
-                    if (t == null || !List.class.isAssignableFrom(t)) continue;
+                    if (t == null) continue;
                     f.setAccessible(true);
                     Object v = f.get(adapter);
-                    if (!(v instanceof List)) continue;
-                    List<?> list = (List<?>) v;
+                    List<?> list = null;
+                    if (v instanceof List) {
+                        list = (List<?>) v;
+                    } else {
+                        list = extractList(v);
+                    }
+                    if (list == null) continue;
                     if (position >= list.size()) continue;
                     Object item = list.get(position);
                     if (item != null) return item;
@@ -4693,6 +4716,9 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         boolean hasContent = hasStringFieldOrMethod(c, new String[]{"content", "message", "msg", "text"});
         boolean hasTime = hasNumberFieldOrMethod(c, new String[]{"ctime", "time", "date", "ts"});
         boolean hasControl = hasFieldTypeNameContains(c, "ReplyControl");
+        if (!hasControl && !ln.contains("comment") && !ln.contains("reply")) {
+            return false;
+        }
         if (hasId && (hasRoot || hasContent || hasTime || hasControl)) return true;
         if (hasControl) return true;
         int score = 0;
