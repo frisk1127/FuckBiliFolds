@@ -29,6 +29,7 @@ import de.robv.android.xposed.callbacks.XC_LoadPackage;
 public class BiliFoldsHook implements IXposedHookLoadPackage {
     private static final String TAG = "BiliFolds";
     private static final String BUILD_TAG = "build-" + BuildConfig.GIT_SHA;
+    private static final boolean DEBUG_VERBOSE = false;
     private static final List<String> TARGET_PACKAGES = Arrays.asList(
             "tv.danmaku.bili",
             "com.bilibili.app.in",
@@ -322,7 +323,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                 marked += markReplyControlDeep(param.thisObject, id, new HashSet<Object>(), 3);
                 marked += markReplyControlDeep(item, id, new HashSet<Object>(), 3);
                 marked += markReplyControlDeep(v, id, new HashSet<Object>(), 2);
-                if (DEBUG_LIKE_FORCE_LOGGED.putIfAbsent(id, Boolean.TRUE) == null) {
+                if (DEBUG_VERBOSE && DEBUG_LIKE_FORCE_LOGGED.putIfAbsent(id, Boolean.TRUE) == null) {
                     log("like.force folded id=" + id
                             + " listener=" + param.thisObject.getClass().getName()
                             + " marked=" + marked);
@@ -417,6 +418,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                         forceUnfold(item);
                     }
                     markReplyControlDeep(holder, id, new HashSet<Object>(), 3);
+                    if (!DEBUG_VERBOSE) return;
                     String key = id + ":" + method.getName();
                     if (DEBUG_H0_CLICK_LOGGED.putIfAbsent(key, Boolean.TRUE) != null) return;
                     String viewInfo = "";
@@ -933,12 +935,14 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
 
     private static void logMarkPlaceOnce(long id, String msg) {
         if (id == 0L || msg == null) return;
+        if (!DEBUG_VERBOSE) return;
         if (DEBUG_MARK_PLACE_LOGGED.putIfAbsent(id, Boolean.TRUE) != null) return;
         log("mark.place id=" + id + " " + msg);
     }
 
     private static void logMarkMoreOnce(long id, ViewGroup row, View more, TextView base, String tag) {
         if (id == 0L || row == null || more == null) return;
+        if (!DEBUG_VERBOSE) return;
         if (DEBUG_MARK_MORE_LOGGED.putIfAbsent(id, Boolean.TRUE) != null) return;
         int idx = row.indexOfChild(more);
         String idName = "";
@@ -964,6 +968,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
 
     private static void logActionRowOnce(long id, ViewGroup group) {
         if (id == 0L || group == null) return;
+        if (!DEBUG_VERBOSE) return;
         if (DEBUG_MARK_DETAIL_LOGGED.putIfAbsent(id, Boolean.TRUE) != null) return;
         StringBuilder sb = new StringBuilder();
         sb.append("mark row id=").append(id)
@@ -985,6 +990,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
 
     private static void logActionRowLayoutOnce(final long id, final ViewGroup group) {
         if (id == 0L || group == null) return;
+        if (!DEBUG_VERBOSE) return;
         if (DEBUG_MARK_LAYOUT_LOGGED.putIfAbsent(id, Boolean.TRUE) != null) return;
         group.post(new Runnable() {
             @Override
@@ -1348,7 +1354,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             wrapFoldedActionClick(v);
             captureLikeTextTemplate(v);
             applyLikeUiOverrideIfNeeded(v, id);
-            if (logged) {
+            if (DEBUG_VERBOSE && logged) {
                 String idName = "";
                 int vid = v.getId();
                 if (vid != View.NO_ID) {
@@ -1370,7 +1376,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                         + " tag=" + tagCls);
             }
         }
-        if (folded && changed > 0 && !logged) {
+        if (DEBUG_VERBOSE && folded && changed > 0 && !logged) {
             log("enable like for folded id=" + id + " total=" + total + " changed=" + changed);
         }
     }
@@ -1541,7 +1547,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             } else {
                 XposedHelpers.callMethod(adapter, "notifyDataSetChanged");
             }
-            if (DEBUG_LIKE_REFRESH_LOGGED.putIfAbsent(id, Boolean.TRUE) == null) {
+            if (DEBUG_VERBOSE && DEBUG_LIKE_REFRESH_LOGGED.putIfAbsent(id, Boolean.TRUE) == null) {
                 log(tag + " folded id=" + id + " idx=" + idx + " size=" + list.size());
             }
         } catch (Throwable ignored) {
@@ -1560,7 +1566,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             FOLDED_LIKE_COUNT.remove(id);
         }
         applyLikeUiToView(view, newLiked, count);
-        if (DEBUG_LIKE_UI_LOGGED.putIfAbsent(id, Boolean.TRUE) == null) {
+        if (DEBUG_VERBOSE && DEBUG_LIKE_UI_LOGGED.putIfAbsent(id, Boolean.TRUE) == null) {
             log("like.ui folded id=" + id + " liked=" + newLiked + " count=" + (count == null ? "?" : count));
         }
     }
@@ -1993,7 +1999,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         }
         int l = Math.round(x);
         int t = Math.round(y);
-        if (DEBUG_MARK_POS_LOGGED.putIfAbsent(id, Boolean.TRUE) == null) {
+        if (DEBUG_VERBOSE && DEBUG_MARK_POS_LOGGED.putIfAbsent(id, Boolean.TRUE) == null) {
             log("mark.pos2 id=" + id
                     + " host=" + hostW + "x" + hostH
                     + " target=" + target.getWidth() + "x" + target.getHeight()
@@ -2177,7 +2183,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         }
         int l = Math.round(x);
         int t = Math.round(y);
-        if (DEBUG_MARK_POS_LOGGED.putIfAbsent(id, Boolean.TRUE) == null) {
+        if (DEBUG_VERBOSE && DEBUG_MARK_POS_LOGGED.putIfAbsent(id, Boolean.TRUE) == null) {
             log("mark.pos id=" + id
                     + " host=" + hostW + "x" + hostH
                     + " anchor=" + anchor.getWidth() + "x" + anchor.getHeight()
@@ -2928,7 +2934,9 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                     out.add(item);
                     continue;
                 }
-                log("zip card cache hit offset=" + offset + " root=" + rootId + " size=" + cached.size() + " tag=" + tag);
+                if (DEBUG_VERBOSE) {
+                    log("zip card cache hit offset=" + offset + " root=" + rootId + " size=" + cached.size() + " tag=" + tag);
+                }
                 markAutoExpand(item);
                 if (rootId > 0) {
                     ArrayList<Object> tips = tipsByRoot.computeIfAbsent(rootId, k -> new ArrayList<>());
@@ -2960,7 +2968,9 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                 String offset = getZipCardOffset(item);
                 if ((text != null && (text.contains("\u5c55\u5f00\u66f4\u591a\u8bc4\u8bba") || text.contains("\u5c55\u5f00\u66f4\u591a"))) ||
                         (offset != null && !offset.isEmpty())) {
-                    log("skip r1 non-zip text=" + text + " offset=" + offset + " tag=" + tag);
+                    if (DEBUG_VERBOSE) {
+                        log("skip r1 non-zip text=" + text + " offset=" + offset + " tag=" + tag);
+                    }
                 }
             }
             out.add(item);
@@ -3063,7 +3073,9 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         }
         if (inserted > 0) {
             SUBJECT_EXPANDED.put(subjectKey, Boolean.TRUE);
-            log("inject subject cached size=" + cached.size() + " inserted=" + inserted + " key=" + subjectKey);
+            if (DEBUG_VERBOSE) {
+                log("inject subject cached size=" + cached.size() + " inserted=" + inserted + " key=" + subjectKey);
+            }
             return true;
         }
         return false;
@@ -3098,12 +3110,14 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                 "getVisibleCount"
         );
         if (folded > 0 || invisible > 0 || (total > 0 && child >= 0 && total - child > 0)) {
-            log("comment fold stats root=" + rootId
-                    + " id=" + getId(item)
-                    + " folded=" + folded
-                    + " invisible=" + invisible
-                    + " total=" + total
-                    + " child=" + child);
+            if (DEBUG_VERBOSE) {
+                log("comment fold stats root=" + rootId
+                        + " id=" + getId(item)
+                        + " folded=" + folded
+                        + " invisible=" + invisible
+                        + " total=" + total
+                        + " child=" + child);
+            }
         }
     }
 
@@ -3150,7 +3164,9 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         int max = list.size();
         int found = 0;
         int seenR1 = 0;
-        log("prefetch list size=" + list.size() + " scanMax=" + max);
+        if (DEBUG_VERBOSE) {
+            log("prefetch list size=" + list.size() + " scanMax=" + max);
+        }
         for (int i = 0; i < max; i++) {
             Object item = list.get(i);
             if (isZipCardClass(item)) {
@@ -3159,7 +3175,9 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                 String offset = getZipCardOffset(item);
                 if ((text != null && (text.contains("\u5c55\u5f00\u66f4\u591a\u8bc4\u8bba") || text.contains("\u5c55\u5f00\u66f4\u591a"))) ||
                         (offset != null && !offset.isEmpty())) {
-                    log("prefetch r1 idx=" + i + " text=" + text + " offset=" + offset);
+                    if (DEBUG_VERBOSE) {
+                        log("prefetch r1 idx=" + i + " text=" + text + " offset=" + offset);
+                    }
                 }
             }
             if (!isZipCard(item)) continue;
@@ -3172,13 +3190,15 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             if (rootId == 0L) {
                 rootId = findPrevCommentRootId(list, i);
             }
-            log("prefetch fold card idx=" + i + " offset=" + offset + " root=" + rootId);
+            if (DEBUG_VERBOSE) {
+                log("prefetch fold card idx=" + i + " offset=" + offset + " root=" + rootId);
+            }
             tryAutoFetchFoldList(offset, subjectKey, rootId);
         }
-        if (found > 1) {
+        if (DEBUG_VERBOSE && found > 1) {
             log("prefetch fold cards total=" + found);
         }
-        if (seenR1 > 1) {
+        if (DEBUG_VERBOSE && seenR1 > 1) {
             log("prefetch r1 total=" + seenR1);
         }
     }
@@ -3793,7 +3813,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         HashSet<Object> updated = new HashSet<>();
         int count = updateLikeDeep(item, newLiked, delta, updated, 3);
         count += updateLikeInCaches(id, newLiked, delta, updated);
-        if (DEBUG_LIKE_OPT_LOGGED.putIfAbsent(id, Boolean.TRUE) == null) {
+        if (DEBUG_VERBOSE && DEBUG_LIKE_OPT_LOGGED.putIfAbsent(id, Boolean.TRUE) == null) {
             log("like.optimistic folded id=" + id + " liked=" + newLiked + " delta=" + delta + " updated=" + count);
         }
         return newLiked;
