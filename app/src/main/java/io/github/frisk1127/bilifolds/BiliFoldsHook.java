@@ -138,6 +138,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         safeHook("hookDetailListDataSource", new Runnable() { @Override public void run() { hookDetailListDataSource(APP_CL); } });
         safeHook("hookListAdapterSubmit", new Runnable() { @Override public void run() { hookListAdapterSubmit(APP_CL); } });
         safeHook("hookAsyncListDifferSubmit", new Runnable() { @Override public void run() { hookAsyncListDifferSubmit(APP_CL); } });
+        safeHook("hookRecyclerViewAdapterBind", new Runnable() { @Override public void run() { hookRecyclerViewAdapterBind(APP_CL); } });
     }
 
     private static void safeHook(String name, Runnable r) {
@@ -310,6 +311,49 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             return;
         }
         hookSubmitListMethods(c, "AsyncListDiffer");
+    }
+
+    private static void hookRecyclerViewAdapterBind(ClassLoader cl) {
+        Class<?> c = XposedHelpers.findClassIfExists(
+                "androidx.recyclerview.widget.RecyclerView$Adapter",
+                cl
+        );
+        if (c == null) {
+            log("RecyclerView.Adapter class not found");
+            return;
+        }
+        XposedBridge.hookAllMethods(c, "onBindViewHolder", new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam param) {
+                try {
+                    Object adapter = param.thisObject;
+                    if (adapter == null) return;
+                    String aName = adapter.getClass().getName();
+                    boolean maybe = aName != null && (aName.contains("bilibili") || aName.contains("comment") || aName.contains("reply"));
+                    Object holder = param.args != null && param.args.length > 0 ? param.args[0] : null;
+                    Object found = findCommentItemInHolder(holder);
+                    if (found != null) {
+                        if (!isCommentAdapter(adapter)) {
+                            markCommentAdapter(adapter);
+                            LAST_COMMENT_ADAPTER = new WeakReference<>(adapter);
+                            COMMENT_ADAPTER_CLASS = adapter.getClass().getName();
+                            hookAdapterForCommentList(adapter);
+                        }
+                        if (LOG_ONCE.putIfAbsent("adapter.bind." + aName, Boolean.TRUE) == null) {
+                            String hName = holder == null ? "null" : holder.getClass().getName();
+                            log("adapter.bind comment adapter=" + aName + " holder=" + hName
+                                    + " item=" + found.getClass().getName());
+                        }
+                        return;
+                    }
+                    if (maybe && LOG_ONCE.putIfAbsent("adapter.bind.maybe." + aName, Boolean.TRUE) == null) {
+                        String hName = holder == null ? "null" : holder.getClass().getName();
+                        log("adapter.bind maybe adapter=" + aName + " holder=" + hName);
+                    }
+                } catch (Throwable ignored) {
+                }
+            }
+        });
     }
 
     private static void hookSubmitListMethods(Class<?> c, String tag) {
@@ -541,6 +585,28 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         if (obj == null) return false;
         Class<?> c = getRecyclerViewAdapterClass(obj.getClass().getClassLoader());
         return c != null && c.isInstance(obj);
+    }
+
+    private static Object findCommentItemInHolder(Object holder) {
+        if (holder == null) return null;
+        Class<?> c = holder.getClass();
+        for (Class<?> cur = c; cur != null && cur != Object.class; cur = cur.getSuperclass()) {
+            try {
+                Field[] fields = cur.getDeclaredFields();
+                if (fields == null) continue;
+                for (Field f : fields) {
+                    if (f == null) continue;
+                    Class<?> t = f.getType();
+                    if (t == null || t.isPrimitive()) continue;
+                    if (View.class.isAssignableFrom(t)) continue;
+                    f.setAccessible(true);
+                    Object v = f.get(holder);
+                    if (isCommentItem(v)) return v;
+                }
+            } catch (Throwable ignored) {
+            }
+        }
+        return null;
     }
 
     private static Class<?> getRecyclerViewAdapterClass(ClassLoader cl) {
