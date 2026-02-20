@@ -2902,6 +2902,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
 
     private static boolean shouldCacheFoldList(String tag, String offset, String scopeKey) {
         if (offset == null || offset.isEmpty()) return false;
+        if (offset.startsWith("root:")) return true;
         if (tag != null && tag.startsWith("auto.")) return true;
         String key = makeOffsetKey(offset, scopeKey);
         if (key != null && !key.isEmpty()) {
@@ -3544,12 +3545,19 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
     }
 
     private static void tryAutoFetchFoldList(String offset, String subjectKey, long rootId) {
-        if (offset == null || offset.isEmpty()) return;
-        String key = resolveOffsetKey(offset, subjectKey);
+        boolean hasOffset = offset != null && !offset.isEmpty();
+        String key = hasOffset ? resolveOffsetKey(offset, subjectKey) : null;
         if (key != null && FOLD_CACHE_BY_OFFSET.containsKey(key)) {
             return;
         }
-        String fetchKey = key == null ? offset : key;
+        String fetchKey;
+        if (hasOffset) {
+            fetchKey = key == null ? offset : key;
+        } else if (rootId != 0L) {
+            fetchKey = "root:" + rootId;
+        } else {
+            return;
+        }
         if (AUTO_FETCHING.putIfAbsent(fetchKey, Boolean.TRUE) != null) return;
         final Object subjectId = LAST_SUBJECT_ID == null ? null : LAST_SUBJECT_ID.get();
         if (subjectId == null) {
@@ -3566,6 +3574,13 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             @Override
             public void run() {
                 try {
+                    if (!hasOffset && rootIdFinal != 0L) {
+                        Object detail = fetchDetailList(subjectId, rootIdFinal, extra);
+                        if (detail != null) {
+                            cacheFoldListResult("auto.detail.root", fetchKey, detail);
+                            return;
+                        }
+                    }
                     if (rootIdFinal != 0L) {
                         Object detail = fetchDetailList(subjectId, rootIdFinal, extra);
                         if (detail != null) {
