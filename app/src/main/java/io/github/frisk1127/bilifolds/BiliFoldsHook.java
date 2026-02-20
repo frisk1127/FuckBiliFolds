@@ -4714,6 +4714,9 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
     private static boolean isNonCommentCandidate(Object item) {
         if (item == null) return true;
         if (isRecyclerViewViewHolder(item)) return true;
+        if (item instanceof Class) return true;
+        if (item instanceof java.lang.reflect.Method) return true;
+        if (item instanceof java.lang.reflect.Field) return true;
         if (item instanceof View) return true;
         if (item instanceof CharSequence) return true;
         if (item instanceof Number) return true;
@@ -4723,6 +4726,12 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         String name = item.getClass().getName();
         if (name != null) {
             String ln = name.toLowerCase();
+            if (ln.startsWith("android.") || ln.startsWith("androidx.")
+                    || ln.startsWith("java.") || ln.startsWith("javax.")
+                    || ln.startsWith("kotlin.") || ln.startsWith("kotlinx.")
+                    || ln.startsWith("com.google.")) {
+                return true;
+            }
             if (ln.contains("viewholder") || ln.contains(".ui.holder")) {
                 return true;
             }
@@ -5178,20 +5187,24 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
     private static long getId(Object item) {
         if (item == null) return 0L;
         try {
-            return XposedHelpers.getLongField(item, "f55112a");
+            long v = XposedHelpers.getLongField(item, "f55112a");
+            if (v > 0) return v;
         } catch (Throwable ignored) {
         }
         try {
             Object v = XposedHelpers.callMethod(item, "getId");
-            if (v instanceof Long) return (Long) v;
+            if (v instanceof Number) {
+                long id = ((Number) v).longValue();
+                if (id > 0) return id;
+            }
         } catch (Throwable ignored) {
         }
         long id = callLongMethod(item, "getRpid");
-        if (id != 0L) return id;
+        if (id > 0L) return id;
         id = callLongMethod(item, "getReplyId");
-        if (id != 0L) return id;
+        if (id > 0L) return id;
         id = callLongMethod(item, "getId");
-        if (id != 0L) return id;
+        if (id > 0L) return id;
         if (COMMENT_ID_FIELD != null) {
             try {
                 COMMENT_ID_FIELD.setAccessible(true);
@@ -5255,23 +5268,23 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
     private static long getRootId(Object item) {
         if (item == null) return 0L;
         long v = callLongMethod(item, "getRoot");
-        if (v != 0L) return v;
+        if (v > 0L) return v;
         v = callLongMethod(item, "getRootId");
-        if (v != 0L) return v;
+        if (v > 0L) return v;
         v = callLongMethod(item, "getRootRpid");
-        if (v != 0L) return v;
+        if (v > 0L) return v;
         v = callLongMethod(item, "getParent");
-        if (v != 0L) return v;
+        if (v > 0L) return v;
         v = callLongMethod(item, "getParentId");
-        if (v != 0L) return v;
+        if (v > 0L) return v;
         v = callLongMethod(item, "O");
-        if (v != 0L) return v;
+        if (v > 0L) return v;
         v = callLongMethod(item, "M");
-        if (v != 0L) return v;
+        if (v > 0L) return v;
         v = getLongField(item, "f55115d");
-        if (v != 0L) return v;
+        if (v > 0L) return v;
         v = getLongField(item, "f55116e");
-        if (v != 0L) return v;
+        if (v > 0L) return v;
         long id = getId(item);
         return id;
     }
@@ -5580,7 +5593,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         };
         for (String m : methods) {
             v = callLongMethod(zipCard, m);
-            if (v != 0) return v;
+            if (v > 0) return v;
         }
         Field[] fields = zipCard.getClass().getDeclaredFields();
         for (Field f : fields) {
@@ -5595,7 +5608,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                 Object val = f.get(zipCard);
                 if (val instanceof Number) {
                     v = ((Number) val).longValue();
-                    if (v != 0) return v;
+                    if (v > 0) return v;
                 }
             } catch (Throwable ignored) {
             }
