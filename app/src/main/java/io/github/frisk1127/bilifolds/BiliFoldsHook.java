@@ -5197,8 +5197,8 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                 COMMENT_ID_FIELD.setAccessible(true);
                 Object v = COMMENT_ID_FIELD.get(item);
                 if (v instanceof Number) {
-                    long id = ((Number) v).longValue();
-                    if (id > 0) return id;
+                    long val = ((Number) v).longValue();
+                    if (val > 0) return val;
                 }
             } catch (Throwable ignored) {
             }
@@ -5209,8 +5209,8 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                 COMMENT_ID_FIELD.setAccessible(true);
                 Object v = COMMENT_ID_FIELD.get(item);
                 if (v instanceof Number) {
-                    long id = ((Number) v).longValue();
-                    if (id > 0) return id;
+                    long val = ((Number) v).longValue();
+                    if (val > 0) return val;
                 }
             } catch (Throwable ignored) {
             }
