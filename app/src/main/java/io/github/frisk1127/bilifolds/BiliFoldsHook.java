@@ -4435,88 +4435,165 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         String name = c.getName();
         if (name == null) return false;
         String ln = name.toLowerCase();
-        if (ln.contains("$") && !ln.endsWith("commentitem")) {
-            return false;
-        }
         boolean hasId = hasNumberFieldOrMethod(c, new String[]{"id", "rpid", "replyid"});
-        if (!hasId) return false;
         boolean hasRoot = hasNumberFieldOrMethod(c, new String[]{"root", "parent"});
         boolean hasContent = hasStringFieldOrMethod(c, new String[]{"content", "message", "msg", "text"});
         boolean hasTime = hasNumberFieldOrMethod(c, new String[]{"ctime", "time", "date", "ts"});
         boolean hasControl = hasFieldTypeNameContains(c, "ReplyControl");
-        if (hasRoot || hasContent || hasTime || hasControl) return true;
-        return ln.contains("comment") || ln.contains("reply");
+        if (hasId && (hasRoot || hasContent || hasTime || hasControl)) return true;
+        if (hasControl) return true;
+        int score = 0;
+        int numFields = countNumberFieldsByType(c);
+        int strFields = countStringFieldsByType(c);
+        int listFields = countListFieldsByType(c);
+        if (numFields >= 3) {
+            score += 2;
+        } else if (numFields >= 2) {
+            score += 1;
+        }
+        if (strFields >= 1) score += 1;
+        if (listFields >= 1) score += 1;
+        if (ln.contains("comment") || ln.contains("reply")) score += 1;
+        if (ln.contains("$")) score -= 1;
+        return score >= 3;
     }
 
     private static boolean hasNumberFieldOrMethod(Class<?> c, String[] keys) {
         if (c == null || keys == null) return false;
-        try {
-            for (java.lang.reflect.Method m : c.getDeclaredMethods()) {
-                String n = m.getName();
-                if (n == null) continue;
-                String ln = n.toLowerCase();
-                if (!containsAny(ln, keys)) continue;
-                Class<?> rt = m.getReturnType();
-                if (rt != null && (rt.isPrimitive() || Number.class.isAssignableFrom(rt))) {
-                    return true;
+        for (Class<?> cur = c; cur != null && cur != Object.class; cur = cur.getSuperclass()) {
+            try {
+                for (java.lang.reflect.Method m : cur.getDeclaredMethods()) {
+                    String n = m.getName();
+                    if (n == null) continue;
+                    String ln = n.toLowerCase();
+                    if (!containsAny(ln, keys)) continue;
+                    Class<?> rt = m.getReturnType();
+                    if (isNumericType(rt)) {
+                        return true;
+                    }
                 }
+            } catch (Throwable ignored) {
             }
-        } catch (Throwable ignored) {
-        }
-        try {
-            for (Field f : c.getDeclaredFields()) {
-                String n = f.getName();
-                if (n == null) continue;
-                String ln = n.toLowerCase();
-                if (!containsAny(ln, keys)) continue;
-                Class<?> t = f.getType();
-                if (t != null && (t.isPrimitive() || Number.class.isAssignableFrom(t))) {
-                    return true;
+            try {
+                for (Field f : cur.getDeclaredFields()) {
+                    String n = f.getName();
+                    if (n == null) continue;
+                    String ln = n.toLowerCase();
+                    if (!containsAny(ln, keys)) continue;
+                    Class<?> t = f.getType();
+                    if (isNumericType(t)) {
+                        return true;
+                    }
                 }
+            } catch (Throwable ignored) {
             }
-        } catch (Throwable ignored) {
         }
         return false;
     }
 
     private static boolean hasStringFieldOrMethod(Class<?> c, String[] keys) {
         if (c == null || keys == null) return false;
-        try {
-            for (java.lang.reflect.Method m : c.getDeclaredMethods()) {
-                String n = m.getName();
-                if (n == null) continue;
-                String ln = n.toLowerCase();
-                if (!containsAny(ln, keys)) continue;
-                Class<?> rt = m.getReturnType();
-                if (rt == String.class) return true;
+        for (Class<?> cur = c; cur != null && cur != Object.class; cur = cur.getSuperclass()) {
+            try {
+                for (java.lang.reflect.Method m : cur.getDeclaredMethods()) {
+                    String n = m.getName();
+                    if (n == null) continue;
+                    String ln = n.toLowerCase();
+                    if (!containsAny(ln, keys)) continue;
+                    Class<?> rt = m.getReturnType();
+                    if (rt == String.class || (rt != null && CharSequence.class.isAssignableFrom(rt))) {
+                        return true;
+                    }
+                }
+            } catch (Throwable ignored) {
             }
-        } catch (Throwable ignored) {
-        }
-        try {
-            for (Field f : c.getDeclaredFields()) {
-                String n = f.getName();
-                if (n == null) continue;
-                String ln = n.toLowerCase();
-                if (!containsAny(ln, keys)) continue;
-                if (f.getType() == String.class) return true;
+            try {
+                for (Field f : cur.getDeclaredFields()) {
+                    String n = f.getName();
+                    if (n == null) continue;
+                    String ln = n.toLowerCase();
+                    if (!containsAny(ln, keys)) continue;
+                    Class<?> t = f.getType();
+                    if (t == String.class || (t != null && CharSequence.class.isAssignableFrom(t))) {
+                        return true;
+                    }
+                }
+            } catch (Throwable ignored) {
             }
-        } catch (Throwable ignored) {
         }
         return false;
     }
 
     private static boolean hasFieldTypeNameContains(Class<?> c, String token) {
         if (c == null || token == null || token.isEmpty()) return false;
-        try {
-            for (Field f : c.getDeclaredFields()) {
-                Class<?> t = f.getType();
-                if (t == null) continue;
-                String n = t.getName();
-                if (n != null && n.contains(token)) return true;
+        for (Class<?> cur = c; cur != null && cur != Object.class; cur = cur.getSuperclass()) {
+            try {
+                for (Field f : cur.getDeclaredFields()) {
+                    Class<?> t = f.getType();
+                    if (t == null) continue;
+                    String n = t.getName();
+                    if (n != null && n.contains(token)) return true;
+                }
+            } catch (Throwable ignored) {
             }
-        } catch (Throwable ignored) {
         }
         return false;
+    }
+
+    private static int countNumberFieldsByType(Class<?> c) {
+        if (c == null) return 0;
+        int count = 0;
+        for (Class<?> cur = c; cur != null && cur != Object.class; cur = cur.getSuperclass()) {
+            try {
+                for (Field f : cur.getDeclaredFields()) {
+                    if (isNumericType(f.getType())) count++;
+                }
+            } catch (Throwable ignored) {
+            }
+        }
+        return count;
+    }
+
+    private static int countStringFieldsByType(Class<?> c) {
+        if (c == null) return 0;
+        int count = 0;
+        for (Class<?> cur = c; cur != null && cur != Object.class; cur = cur.getSuperclass()) {
+            try {
+                for (Field f : cur.getDeclaredFields()) {
+                    Class<?> t = f.getType();
+                    if (t == String.class || (t != null && CharSequence.class.isAssignableFrom(t))) {
+                        count++;
+                    }
+                }
+            } catch (Throwable ignored) {
+            }
+        }
+        return count;
+    }
+
+    private static int countListFieldsByType(Class<?> c) {
+        if (c == null) return 0;
+        int count = 0;
+        for (Class<?> cur = c; cur != null && cur != Object.class; cur = cur.getSuperclass()) {
+            try {
+                for (Field f : cur.getDeclaredFields()) {
+                    Class<?> t = f.getType();
+                    if (t != null && List.class.isAssignableFrom(t)) {
+                        count++;
+                    }
+                }
+            } catch (Throwable ignored) {
+            }
+        }
+        return count;
+    }
+
+    private static boolean isNumericType(Class<?> t) {
+        if (t == null) return false;
+        if (t.isPrimitive()) {
+            return t != boolean.class && t != char.class;
+        }
+        return Number.class.isAssignableFrom(t);
     }
 
 
