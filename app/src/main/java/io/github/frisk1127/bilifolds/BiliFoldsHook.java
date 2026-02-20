@@ -68,6 +68,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
     private static final ConcurrentHashMap<Long, Boolean> DEBUG_LIKE_REFRESH_LOGGED = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<Long, Boolean> DEBUG_LIKE_OPT_LOGGED = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<Long, Boolean> DEBUG_LIKE_UI_LOGGED = new ConcurrentHashMap<>();
+    private static final AtomicInteger MARK_TOKEN_GEN = new AtomicInteger(0);
     private static final ThreadLocal<Long> CLICK_FOLDED_ID = new ThreadLocal<>();
     private static final ThreadLocal<java.util.ArrayDeque<Long>> CLICK_ID_STACK = new ThreadLocal<>();
     private static final ConcurrentHashMap<Long, Boolean> FOLDED_LIKE_STATE = new ConcurrentHashMap<>();
@@ -312,7 +313,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                     if (cid != 0L) id = cid;
                 }
                 if (id == 0L) return;
-                if (!Boolean.TRUE.equals(FOLDED_IDS.get(id))) return;
+                if (!isFoldedItem(item)) return;
                 pushClickFoldedId(id);
                 if (isCommentItem(item)) {
                     forceUnfold(item);
@@ -340,7 +341,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                     if (cid != 0L) id = cid;
                 }
                 if (id == 0L) return;
-                if (!Boolean.TRUE.equals(FOLDED_IDS.get(id))) return;
+                if (!isFoldedItem(item)) return;
                 popClickFoldedId();
             }
         });
@@ -409,8 +410,8 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                         }
                     }
                     if (id == 0L) return;
-                    if (!Boolean.TRUE.equals(FOLDED_IDS.get(id))) return;
                     Object item = getAdditionalObject(holder, "BiliFoldsCommentItem");
+                    if (!isFoldedItem(item)) return;
                     pushClickFoldedId(id);
                     if (isCommentItem(item)) {
                         forceUnfold(item);
@@ -474,7 +475,8 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                         }
                     }
                     if (id == 0L) return;
-                    if (!Boolean.TRUE.equals(FOLDED_IDS.get(id))) return;
+                    Object item = getAdditionalObject(holder, "BiliFoldsCommentItem");
+                    if (!isFoldedItem(item)) return;
                     popClickFoldedId();
                 }
             });
@@ -550,7 +552,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                             hookH0ClickTraceByName(holderName, hcl);
                         }
                         ensureFoldedActionsClickable((View) itemViewObj, id, item);
-                        if (!Boolean.TRUE.equals(FOLDED_IDS.get(id))) {
+                        if (!isFoldedItem(item)) {
                             clearFoldMarkFromView((View) itemViewObj);
                             return;
                         }
@@ -609,6 +611,10 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         if (!(root instanceof ViewGroup)) return false;
         ViewGroup actionRow = (ViewGroup) root;
         ViewGroup markRoot = actionRow;
+        try {
+            XposedHelpers.setAdditionalInstanceField(actionRow, "BiliFoldsCommentId", id);
+        } catch (Throwable ignored) {
+        }
         removeFoldMark(markRoot);
         TextView tvI = getBindingTextView(binding, "i", "f400674i");
         TextView tvH = getBindingTextView(binding, "h", "f400673h");
@@ -737,6 +743,10 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             return false;
         }
         ViewGroup markRoot = actionRow;
+        try {
+            XposedHelpers.setAdditionalInstanceField(actionRow, "BiliFoldsCommentId", id);
+        } catch (Throwable ignored) {
+        }
         removeFoldMark(markRoot);
         TextView viewConv = findTextViewContains(actionRow, "\u67e5\u770b\u5bf9\u8bdd");
         if (viewConv != null && isVisibleView(viewConv)) {
@@ -817,6 +827,24 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         if (root == null) return;
         removeFoldMark(root);
         stripFoldSuffixFromView(root);
+    }
+
+    private static void markFoldedItem(Object item) {
+        if (item == null) return;
+        try {
+            XposedHelpers.setAdditionalInstanceField(item, "BiliFoldsFolded", Boolean.TRUE);
+        } catch (Throwable ignored) {
+        }
+    }
+
+    private static boolean isFoldedItem(Object item) {
+        if (item == null) return false;
+        try {
+            Object v = XposedHelpers.getAdditionalInstanceField(item, "BiliFoldsFolded");
+            if (v instanceof Boolean) return (Boolean) v;
+        } catch (Throwable ignored) {
+        }
+        return false;
     }
 
     private static TextView newFoldMark(ViewGroup group, TextView base) {
@@ -1289,7 +1317,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                 "\u4e0d\u559c\u6b22"
         }, targets);
         if (targets.isEmpty()) return;
-        boolean folded = Boolean.TRUE.equals(FOLDED_IDS.get(id));
+        boolean folded = isFoldedItem(item);
         int changed = 0;
         int total = 0;
         boolean logged = folded && DEBUG_LIKE_LOGGED.putIfAbsent(id, Boolean.TRUE) == null;
@@ -1382,7 +1410,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                         long cid = getId(item);
                         if (cid != 0L) clickId = cid;
                     }
-                    boolean folded = clickId != 0L && Boolean.TRUE.equals(FOLDED_IDS.get(clickId));
+                    boolean folded = clickId != 0L && isFoldedItem(item);
                     if (folded) {
                         pushClickFoldedId(clickId);
                         if (isCommentItem(item)) {
@@ -1465,7 +1493,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
 
     private static boolean isClickForceActive() {
         Long id = CLICK_FOLDED_ID.get();
-        return id != null && id != 0L && Boolean.TRUE.equals(FOLDED_IDS.get(id));
+        return id != null && id != 0L;
     }
 
     private static long getClickFoldedId() {
@@ -1848,6 +1876,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
 
     private static boolean addOverlayMark(final ViewGroup host, final View anchor, final TextView mark) {
         if (host == null || anchor == null || mark == null) return false;
+        final int token = nextMarkToken(host);
         try {
             Object old = XposedHelpers.getAdditionalInstanceField(host, "BiliFoldsOverlayMark");
             if (old instanceof View) {
@@ -1869,6 +1898,8 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         host.post(new Runnable() {
             @Override
             public void run() {
+                if (!isMarkTokenValid(host, token)) return;
+                if (!isMarkHostMatch(host, mark)) return;
                 try {
                     android.view.ViewOverlay ov = host.getOverlay();
                     if (ov instanceof android.view.ViewGroupOverlay) {
@@ -1888,6 +1919,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
 
     private static boolean addOverlayMarkLeftOf(final ViewGroup host, final View target, final TextView mark) {
         if (host == null || target == null || mark == null) return false;
+        final int token = nextMarkToken(host);
         try {
             Object old = XposedHelpers.getAdditionalInstanceField(host, "BiliFoldsOverlayMark");
             if (old instanceof View) {
@@ -1909,6 +1941,8 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         host.post(new Runnable() {
             @Override
             public void run() {
+                if (!isMarkTokenValid(host, token)) return;
+                if (!isMarkHostMatch(host, mark)) return;
                 try {
                     android.view.ViewOverlay ov = host.getOverlay();
                     if (ov instanceof android.view.ViewGroupOverlay) {
@@ -1972,6 +2006,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
 
     private static boolean addOverlayMarkRightOf(final ViewGroup host, final View target, final TextView mark) {
         if (host == null || target == null || mark == null) return false;
+        final int token = nextMarkToken(host);
         try {
             Object old = XposedHelpers.getAdditionalInstanceField(host, "BiliFoldsOverlayMark");
             if (old instanceof View) {
@@ -1993,6 +2028,8 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         host.postDelayed(new Runnable() {
             @Override
             public void run() {
+                if (!isMarkTokenValid(host, token)) return;
+                if (!isMarkHostMatch(host, mark)) return;
                 try {
                     android.view.ViewOverlay ov = host.getOverlay();
                     if (ov instanceof android.view.ViewGroupOverlay) {
@@ -2008,6 +2045,58 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             }
         }, 80);
         return true;
+    }
+
+    private static boolean isMarkHostMatch(View host, View mark) {
+        long markId = 0L;
+        try {
+            Object v = XposedHelpers.getAdditionalInstanceField(mark, "BiliFoldsId");
+            if (v instanceof Number) markId = ((Number) v).longValue();
+        } catch (Throwable ignored) {
+        }
+        long boundId = getBoundCommentId(host);
+        if (markId != 0L && boundId != 0L && markId != boundId) {
+            return false;
+        }
+        return true;
+    }
+
+    private static int nextMarkToken(View host) {
+        int token = MARK_TOKEN_GEN.incrementAndGet();
+        try {
+            XposedHelpers.setAdditionalInstanceField(host, "BiliFoldsMarkToken", token);
+        } catch (Throwable ignored) {
+        }
+        return token;
+    }
+
+    private static boolean isMarkTokenValid(View host, int token) {
+        if (host == null) return false;
+        try {
+            Object v = XposedHelpers.getAdditionalInstanceField(host, "BiliFoldsMarkToken");
+            if (v instanceof Number) {
+                return ((Number) v).intValue() == token;
+            }
+        } catch (Throwable ignored) {
+        }
+        return false;
+    }
+
+    private static long getBoundCommentId(View view) {
+        View cur = view;
+        for (int i = 0; i < 6 && cur != null; i++) {
+            try {
+                Object v = XposedHelpers.getAdditionalInstanceField(cur, "BiliFoldsCommentId");
+                if (v instanceof Number) {
+                    long id = ((Number) v).longValue();
+                    if (id != 0L) return id;
+                }
+            } catch (Throwable ignored) {
+            }
+            if (!(cur.getParent() instanceof View)) break;
+            cur = (View) cur.getParent();
+        }
+        return 0L;
     }
 
     private static void positionOverlayRightOf(ViewGroup host, View target, TextView mark) {
@@ -2385,6 +2474,10 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             }
         } catch (Throwable ignored) {
         }
+        try {
+            XposedHelpers.removeAdditionalInstanceField(root, "BiliFoldsMarkToken");
+        } catch (Throwable ignored) {
+        }
         if (root instanceof ViewGroup) {
             ViewGroup group = (ViewGroup) root;
             for (int i = 0; i < group.getChildCount(); i++) {
@@ -2445,16 +2538,27 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         if (list == null || list.isEmpty()) {
             return;
         }
-        ArrayList<Object> bucket = new ArrayList<>(list.size());
         long rootId = 0L;
+        boolean mixedRoot = false;
+        for (Object o : list) {
+            if (o == null || !isCommentItem(o)) continue;
+            long root = getRootId(o);
+            if (root == 0L) continue;
+            if (rootId == 0L) {
+                rootId = root;
+            } else if (root != rootId) {
+                mixedRoot = true;
+                break;
+            }
+        }
+        if (rootId == 0L || mixedRoot) {
+            return;
+        }
+        ArrayList<Object> bucket = new ArrayList<>(list.size());
         for (Object o : list) {
             if (o == null || !isCommentItem(o)) continue;
             long id = getId(o);
             long root = getRootId(o);
-            if (rootId == 0L) {
-                if (root != 0L) rootId = root;
-                else if (id != 0L) rootId = id;
-            }
             if (rootId != 0L) {
                 if (id == rootId) continue;
                 if (root != 0L && root != rootId) continue;
@@ -2468,6 +2572,12 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             return;
         }
         String scopeKey = getCurrentScopeKey();
+        if (scopeKey == null || scopeKey.isEmpty()) {
+            scopeKey = getCurrentSubjectKey();
+        }
+        if (!shouldCacheFoldList(tag, realOffset, scopeKey)) {
+            return;
+        }
         String key = makeOffsetKey(realOffset, scopeKey);
         if (key == null || key.isEmpty()) {
             return;
@@ -2491,6 +2601,21 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             putRootForOffset(realOffset, scopeKey, rootId);
         }
         tryUpdateCommentAdapterList(realOffset);
+    }
+
+    private static boolean shouldCacheFoldList(String tag, String offset, String scopeKey) {
+        if (offset == null || offset.isEmpty()) return false;
+        if (tag != null && tag.startsWith("auto.")) return true;
+        String key = makeOffsetKey(offset, scopeKey);
+        if (key != null && !key.isEmpty()) {
+            if (OFFSET_INSERT_INDEX.containsKey(key)) return true;
+            if (OFFSET_TO_ROOT.containsKey(key)) return true;
+            if (AUTO_FETCHING.containsKey(key)) return true;
+        }
+        if (OFFSET_INSERT_INDEX.containsKey(offset)) return true;
+        if (OFFSET_TO_ROOT.containsKey(offset)) return true;
+        if (AUTO_FETCHING.containsKey(offset)) return true;
+        return false;
     }
 
     private static void tryUpdateCommentAdapterList(String offset) {
@@ -2597,7 +2722,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                         Object item = param.thisObject;
                         long id = getId(item);
                         if (id == 0) return;
-                        if (!Boolean.TRUE.equals(FOLDED_IDS.get(id))) return;
+                        if (!isFoldedItem(item)) return;
                         List<?> tags = (List<?>) result;
                         if (containsFoldTag(tags)) return;
                         Object tag = buildFoldTag(item.getClass().getClassLoader());
@@ -2658,7 +2783,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             if (a == null) continue;
             if (isCommentItem(a)) {
                 long id = getId(a);
-                if (id != 0L && Boolean.TRUE.equals(FOLDED_IDS.get(id))) return id;
+                if (id != 0L && isFoldedItem(a)) return id;
             }
             long id = extractCommentIdFromObject(a);
             if (id != 0L && Boolean.TRUE.equals(FOLDED_IDS.get(id))) return id;
@@ -2816,6 +2941,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                     if (id != 0 && existingIds.contains(id)) {
                         continue;
                     }
+                    markFoldedItem(o);
                     forceUnfold(o);
                     if (getRootId(o) != id && id != 0) {
                         FOLDED_IDS.put(id, Boolean.TRUE);
@@ -2901,6 +3027,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             for (Object o : cached) {
                 long id = getId(o);
                 if (id != 0 && existingIds.contains(id)) continue;
+                markFoldedItem(o);
                 out.add(idx + inserted, o);
                 inserted++;
                 if (id != 0) existingIds.add(id);
@@ -2928,6 +3055,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             if (o == null || !isCommentItem(o)) continue;
             long id = getId(o);
             if (id != 0 && existingIds.contains(id)) continue;
+            markFoldedItem(o);
             forceUnfold(o);
             out.add(o);
             inserted++;
