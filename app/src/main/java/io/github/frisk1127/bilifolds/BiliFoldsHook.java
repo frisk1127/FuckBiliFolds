@@ -346,7 +346,18 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                     if (!(listObj instanceof List)) return;
                     List<?> list = (List<?>) listObj;
                     Object owner = param.thisObject;
+                    String sample = null;
+                    if (LOG_ONCE.putIfAbsent("submit.list." + tag, Boolean.TRUE) == null) {
+                        sample = buildListSample(list, 5);
+                        String ownerName = owner == null ? "null" : owner.getClass().getName();
+                        log("submitList enter tag=" + tag + " owner=" + ownerName + " size=" + list.size()
+                                + " sample=" + sample);
+                    }
                     boolean looks = looksLikeCommentList(list);
+                    if (!looks && LOG_ONCE.putIfAbsent("comment.list.miss", Boolean.TRUE) == null) {
+                        if (sample == null) sample = buildListSample(list, 5);
+                        log("comment list miss tag=" + tag + " size=" + list.size() + " sample=" + sample);
+                    }
                     if (!looks && !isCommentAdapter(owner)) return;
                     if (looks) {
                         markCommentAdapter(owner);
@@ -5737,6 +5748,36 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         if (key == null || key.isEmpty()) return;
         FOOTER_RETRY_COUNT.remove(key);
         FOOTER_RETRY_PENDING.remove(key);
+    }
+
+    private static String buildListSample(List<?> list, int max) {
+        if (list == null || list.isEmpty()) return "";
+        int limit = Math.min(max, list.size());
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < limit; i++) {
+            Object item = list.get(i);
+            if (i > 0) sb.append(" | ");
+            if (item == null) {
+                sb.append(i).append(":null");
+                continue;
+            }
+            String cls = item.getClass().getName();
+            sb.append(i).append(":").append(cls);
+            String h = callStringMethod(item, "h");
+            if (h != null && !h.isEmpty()) {
+                sb.append("(h=").append(trimLogText(h, 18)).append(")");
+            }
+        }
+        return sb.toString();
+    }
+
+    private static String trimLogText(String s, int max) {
+        if (s == null) return "";
+        String t = s.replace('\n', ' ').replace('\r', ' ');
+        if (t.length() > max) {
+            t = t.substring(0, max) + "...";
+        }
+        return t;
     }
 
     private static void log(String msg) {
