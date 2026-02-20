@@ -598,6 +598,10 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                     if (f == null) continue;
                     Class<?> t = f.getType();
                     if (t == null || t.isPrimitive()) continue;
+                    if (List.class.isAssignableFrom(t) || Map.class.isAssignableFrom(t)
+                            || java.util.Collection.class.isAssignableFrom(t)) {
+                        continue;
+                    }
                     if (View.class.isAssignableFrom(t)) continue;
                     f.setAccessible(true);
                     Object v = f.get(holder);
@@ -4490,6 +4494,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
 
     private static boolean isCommentItem(Object item) {
         if (item == null) return false;
+        if (isNonCommentCandidate(item)) return false;
         String cls = item.getClass().getName();
         String known = COMMENT_ITEM_CLASS;
         if (known != null && !known.isEmpty() && known.equals(cls)) return true;
@@ -4508,6 +4513,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
 
     private static boolean looksLikeCommentItem(Object item) {
         if (item == null) return false;
+        if (isNonCommentCandidate(item)) return false;
         Class<?> c = item.getClass();
         String name = c.getName();
         if (name == null) return false;
@@ -4533,6 +4539,22 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         if (ln.contains("comment") || ln.contains("reply")) score += 1;
         if (ln.contains("$")) score -= 1;
         return score >= 3;
+    }
+
+    private static boolean isNonCommentCandidate(Object item) {
+        if (item == null) return true;
+        if (item instanceof View) return true;
+        if (item instanceof CharSequence) return true;
+        if (item instanceof Number) return true;
+        if (item instanceof Boolean) return true;
+        if (item instanceof Map) return true;
+        if (item instanceof java.util.Collection) return true;
+        String name = item.getClass().getName();
+        if (name != null && (name.startsWith("java.util.Collections$")
+                || name.startsWith("kotlin.collections."))) {
+            return true;
+        }
+        return false;
     }
 
     private static boolean hasNumberFieldOrMethod(Class<?> c, String[] keys) {
