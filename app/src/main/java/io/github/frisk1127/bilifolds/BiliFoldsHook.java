@@ -3658,7 +3658,13 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         if (type == 0) type = callLongMethod(subjectId, "getType");
         if (type == 0) type = getLongField(subjectId, "type_");
         if (oid == 0 || type == 0) {
-            return null;
+            if (LAST_SUBJECT_OID > 0 && LAST_SUBJECT_TYPE > 0) {
+                oid = LAST_SUBJECT_OID;
+                type = LAST_SUBJECT_TYPE;
+                logOnce("subject.info.used", "subject info used oid=" + oid + " type=" + type);
+            } else {
+                return null;
+            }
         }
         Class<?> foldReqCls = XposedHelpers.findClassIfExists(
                 "com.bapis.bilibili.main.community.reply.v1.FoldListReq",
@@ -3823,7 +3829,13 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         if (type == 0) type = callLongMethod(subjectId, "getType");
         if (type == 0) type = getLongField(subjectId, "type_");
         if (oid == 0 || type == 0) {
-            return null;
+            if (LAST_SUBJECT_OID > 0 && LAST_SUBJECT_TYPE > 0) {
+                oid = LAST_SUBJECT_OID;
+                type = LAST_SUBJECT_TYPE;
+                logOnce("subject.info.used", "subject info used oid=" + oid + " type=" + type);
+            } else {
+                return null;
+            }
         }
         Class<?> reqCls = XposedHelpers.findClassIfExists(
                 "com.bapis.bilibili.main.community.reply.v1.DetailListReq",
