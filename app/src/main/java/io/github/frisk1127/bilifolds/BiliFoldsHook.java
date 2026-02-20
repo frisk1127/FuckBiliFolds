@@ -1,5 +1,6 @@
 package io.github.frisk1127.bilifolds;
 
+import android.os.SystemClock;
 import android.util.Log;
 import android.view.View;
 import android.view.ViewGroup;
@@ -78,6 +79,9 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
     private static final ConcurrentHashMap<String, AtomicInteger> FOOTER_RETRY_COUNT = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<String, Boolean> FOOTER_RETRY_PENDING = new ConcurrentHashMap<>();
     private static final int FOOTER_RETRY_LIMIT = 12;
+    private static final ConcurrentHashMap<String, Long> LAST_ADAPTER_UPDATE = new ConcurrentHashMap<>();
+    private static final ConcurrentHashMap<String, Boolean> UPDATE_PENDING = new ConcurrentHashMap<>();
+    private static final long UPDATE_THROTTLE_MS = 180L;
 
     private static volatile WeakReference<Object> LAST_SUBJECT_ID = new WeakReference<>(null);
     private static volatile String LAST_SUBJECT_KEY = null;
@@ -2490,6 +2494,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
     }
 
     private static void tryUpdateCommentAdapterList(String offset) {
+        if (shouldThrottleAdapterUpdate(offset)) return;
         Object adapter = LAST_COMMENT_ADAPTER == null ? null : LAST_COMMENT_ADAPTER.get();
         if (adapter == null) return;
         Object differ;
@@ -2510,8 +2515,10 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         List<?> replaced = replaceZipCardsInList(list, "CommentListAdapter.cached");
         if (replaced == null) return;
         if (!containsFooterCard(list)) {
-            if (scheduleFooterRetry(offset)) {
-                return;
+            if (shouldWaitForFooter(list)) {
+                if (scheduleFooterRetry(offset)) {
+                    return;
+                }
             }
         } else {
             clearFooterRetry(offset);
@@ -2534,6 +2541,39 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                 }
             }
         });
+    }
+
+    private static boolean shouldThrottleAdapterUpdate(String offset) {
+        String key = makeOffsetKey(offset, getCurrentScopeKey());
+        if (key == null || key.isEmpty()) key = offset;
+        if (key == null || key.isEmpty()) return false;
+        final String finalKey = key;
+        long now = SystemClock.uptimeMillis();
+        Long last = LAST_ADAPTER_UPDATE.get(finalKey);
+        if (last != null && now - last < UPDATE_THROTTLE_MS) {
+            if (UPDATE_PENDING.putIfAbsent(finalKey, Boolean.TRUE) == null) {
+                final String finalOffset = offset;
+                postToMainDelayed(new Runnable() {
+                    @Override
+                    public void run() {
+                        UPDATE_PENDING.remove(finalKey);
+                        tryUpdateCommentAdapterList(finalOffset);
+                    }
+                }, UPDATE_THROTTLE_MS);
+            }
+            return true;
+        }
+        LAST_ADAPTER_UPDATE.put(finalKey, now);
+        return false;
+    }
+
+    private static boolean shouldWaitForFooter(List<?> list) {
+        if (list == null) return false;
+        String scopeKey = getCurrentScopeKey();
+        if (scopeKey != null && scopeKey.contains("|r:")) return false;
+        long root = detectSingleRootId(list);
+        if (root > 0) return false;
+        return list.size() >= 80;
     }
 
     private static void hookCommentItemTags(ClassLoader cl) {
@@ -2721,6 +2761,9 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
 
     private static List<?> replaceZipCardsInList(List<?> list, String tag) {
         if (list == null || list.isEmpty()) return null;
+        if (FOLD_CACHE.isEmpty() && FOLD_CACHE_BY_OFFSET.isEmpty() && FOLD_CACHE_BY_SUBJECT.isEmpty()) {
+            return null;
+        }
         ArrayList<Object> out = new ArrayList<>(list.size());
         boolean changed = false;
         boolean sawZipCard = false;
@@ -3439,6 +3482,8 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         SUBJECT_EXPANDED.clear();
         FOOTER_RETRY_COUNT.clear();
         FOOTER_RETRY_PENDING.clear();
+        LAST_ADAPTER_UPDATE.clear();
+        UPDATE_PENDING.clear();
         AUTO_EXPAND_ZIP.clear();
         LAST_SCOPE_KEY = null;
     }
