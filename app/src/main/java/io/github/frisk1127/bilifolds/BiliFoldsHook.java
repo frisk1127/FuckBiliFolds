@@ -322,7 +322,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             log("RecyclerView.Adapter class not found");
             return;
         }
-        XposedBridge.hookAllMethods(c, "onBindViewHolder", new XC_MethodHook() {
+        XposedBridge.hookAllMethods(c, "bindViewHolder", new XC_MethodHook() {
             @Override
             protected void beforeHookedMethod(MethodHookParam param) {
                 try {
