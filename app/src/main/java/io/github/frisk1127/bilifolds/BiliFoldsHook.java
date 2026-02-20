@@ -332,7 +332,29 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                     String aName = adapter.getClass().getName();
                     boolean maybe = aName != null && (aName.contains("bilibili") || aName.contains("comment") || aName.contains("reply"));
                     Object holder = param.args != null && param.args.length > 0 ? param.args[0] : null;
+                    int position = -1;
+                    if (param.args != null && param.args.length > 1 && param.args[1] instanceof Integer) {
+                        position = (Integer) param.args[1];
+                    }
                     Object found = findCommentItemInHolder(holder);
+                    if (found == null && position >= 0) {
+                        Object item = findItemFromAdapter(adapter, position);
+                        found = findCommentItemDeep(item, new HashSet<Object>(), 2);
+                        if (found != null && LOG_ONCE.putIfAbsent("adapter.bind.item." + aName, Boolean.TRUE) == null) {
+                            String itemCls = item == null ? "null" : item.getClass().getName();
+                            log("adapter.bind item adapter=" + aName + " pos=" + position + " item=" + itemCls
+                                    + " comment=" + found.getClass().getName());
+                        }
+                    }
+                    if (found == null) {
+                        Object scan = scanAdapterForCommentItem(adapter);
+                        if (scan != null) {
+                            found = scan;
+                            if (LOG_ONCE.putIfAbsent("adapter.bind.scan." + aName, Boolean.TRUE) == null) {
+                                log("adapter.bind scan adapter=" + aName + " comment=" + found.getClass().getName());
+                            }
+                        }
+                    }
                     if (found != null) {
                         if (!isCommentAdapter(adapter)) {
                             markCommentAdapter(adapter);
@@ -615,6 +637,128 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                     if (v == null || v == holder) continue;
                     if (isRecyclerViewViewHolder(v)) continue;
                     if (isCommentItem(v)) return v;
+                }
+            } catch (Throwable ignored) {
+            }
+        }
+        return null;
+    }
+
+    private static Object findItemFromAdapter(Object adapter, int position) {
+        if (adapter == null || position < 0) return null;
+        Object item = tryCallAdapterItem(adapter, position);
+        if (item != null) return item;
+        return findItemFromAdapterList(adapter, position);
+    }
+
+    private static Object tryCallAdapterItem(Object adapter, int position) {
+        try {
+            java.lang.reflect.Method[] methods = adapter.getClass().getMethods();
+            for (java.lang.reflect.Method m : methods) {
+                if (m == null) continue;
+                Class<?>[] pts = m.getParameterTypes();
+                if (pts == null || pts.length != 1) continue;
+                if (pts[0] != int.class && pts[0] != Integer.class) continue;
+                String n = m.getName();
+                if (n == null) continue;
+                String ln = n.toLowerCase();
+                if (!ln.contains("item") && !ln.contains("get")) continue;
+                if (ln.contains("viewtype") || ln.contains("itemviewtype") || ln.contains("itemid")) {
+                    continue;
+                }
+                Class<?> rt = m.getReturnType();
+                if (rt == void.class || rt == int.class || rt == long.class || rt == Integer.class || rt == Long.class) {
+                    continue;
+                }
+                try {
+                    Object v = m.invoke(adapter, position);
+                    if (v != null) return v;
+                } catch (Throwable ignored) {
+                }
+            }
+        } catch (Throwable ignored) {
+        }
+        return null;
+    }
+
+    private static Object findItemFromAdapterList(Object adapter, int position) {
+        if (adapter == null || position < 0) return null;
+        for (Class<?> cur = adapter.getClass(); cur != null && cur != Object.class; cur = cur.getSuperclass()) {
+            try {
+                Field[] fields = cur.getDeclaredFields();
+                if (fields == null) continue;
+                for (Field f : fields) {
+                    if (f == null) continue;
+                    Class<?> t = f.getType();
+                    if (t == null || !List.class.isAssignableFrom(t)) continue;
+                    f.setAccessible(true);
+                    Object v = f.get(adapter);
+                    if (!(v instanceof List)) continue;
+                    List<?> list = (List<?>) v;
+                    if (position >= list.size()) continue;
+                    Object item = list.get(position);
+                    if (item != null) return item;
+                }
+            } catch (Throwable ignored) {
+            }
+        }
+        return null;
+    }
+
+    private static Object scanAdapterForCommentItem(Object adapter) {
+        if (adapter == null) return null;
+        for (Class<?> cur = adapter.getClass(); cur != null && cur != Object.class; cur = cur.getSuperclass()) {
+            try {
+                Field[] fields = cur.getDeclaredFields();
+                if (fields == null) continue;
+                for (Field f : fields) {
+                    if (f == null) continue;
+                    Class<?> t = f.getType();
+                    if (t == null || !List.class.isAssignableFrom(t)) continue;
+                    f.setAccessible(true);
+                    Object v = f.get(adapter);
+                    if (!(v instanceof List)) continue;
+                    List<?> list = (List<?>) v;
+                    int limit = Math.min(5, list.size());
+                    for (int i = 0; i < limit; i++) {
+                        Object item = list.get(i);
+                        Object found = findCommentItemDeep(item, new HashSet<Object>(), 2);
+                        if (found != null) return found;
+                    }
+                }
+            } catch (Throwable ignored) {
+            }
+        }
+        return null;
+    }
+
+    private static Object findCommentItemDeep(Object obj, Set<Object> visited, int depth) {
+        if (obj == null || depth < 0) return null;
+        if (visited == null) visited = new HashSet<>();
+        if (visited.contains(obj)) return null;
+        visited.add(obj);
+        if (isCommentItem(obj)) return obj;
+        if (isNonCommentCandidate(obj)) return null;
+        Class<?> c = obj.getClass();
+        for (Class<?> cur = c; cur != null && cur != Object.class; cur = cur.getSuperclass()) {
+            try {
+                Field[] fields = cur.getDeclaredFields();
+                if (fields == null) continue;
+                for (Field f : fields) {
+                    if (f == null) continue;
+                    Class<?> t = f.getType();
+                    if (t == null || t.isPrimitive()) continue;
+                    if (List.class.isAssignableFrom(t) || Map.class.isAssignableFrom(t)
+                            || java.util.Collection.class.isAssignableFrom(t)) {
+                        continue;
+                    }
+                    if (View.class.isAssignableFrom(t)) continue;
+                    f.setAccessible(true);
+                    Object v = f.get(obj);
+                    if (v == null || v == obj) continue;
+                    if (isRecyclerViewViewHolder(v)) continue;
+                    Object hit = findCommentItemDeep(v, visited, depth - 1);
+                    if (hit != null) return hit;
                 }
             } catch (Throwable ignored) {
             }
@@ -5042,6 +5186,12 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             if (v instanceof Long) return (Long) v;
         } catch (Throwable ignored) {
         }
+        long id = callLongMethod(item, "getRpid");
+        if (id != 0L) return id;
+        id = callLongMethod(item, "getReplyId");
+        if (id != 0L) return id;
+        id = callLongMethod(item, "getId");
+        if (id != 0L) return id;
         if (COMMENT_ID_FIELD != null) {
             try {
                 COMMENT_ID_FIELD.setAccessible(true);
@@ -5104,14 +5254,24 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
 
     private static long getRootId(Object item) {
         if (item == null) return 0L;
-        long root = callLongMethod(item, "O");
-        if (root != 0) return root;
-        long parent = callLongMethod(item, "M");
-        if (parent != 0) return parent;
-        root = getLongField(item, "f55115d");
-        if (root != 0) return root;
-        parent = getLongField(item, "f55116e");
-        if (parent != 0) return parent;
+        long v = callLongMethod(item, "getRoot");
+        if (v != 0L) return v;
+        v = callLongMethod(item, "getRootId");
+        if (v != 0L) return v;
+        v = callLongMethod(item, "getRootRpid");
+        if (v != 0L) return v;
+        v = callLongMethod(item, "getParent");
+        if (v != 0L) return v;
+        v = callLongMethod(item, "getParentId");
+        if (v != 0L) return v;
+        v = callLongMethod(item, "O");
+        if (v != 0L) return v;
+        v = callLongMethod(item, "M");
+        if (v != 0L) return v;
+        v = getLongField(item, "f55115d");
+        if (v != 0L) return v;
+        v = getLongField(item, "f55116e");
+        if (v != 0L) return v;
         long id = getId(item);
         return id;
     }
