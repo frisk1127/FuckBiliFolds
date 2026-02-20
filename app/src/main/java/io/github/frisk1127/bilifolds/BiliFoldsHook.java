@@ -89,14 +89,26 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
     private static volatile String LAST_SUBJECT_KEY = null;
     private static volatile String LAST_SCOPE_KEY = null;
     private static volatile String ZIP_CARD_CLASS = "vv.r1";
+    private static volatile String COMMENT_ITEM_CLASS = "com.bilibili.app.comment3.data.model.CommentItem";
     private static volatile String COMMENT_HOLDER_CLASS = "com.bilibili.app.comment3.ui.holder.h0";
     private static volatile String LIKE_LISTENER_CLASS = "com.bilibili.app.comment3.ui.holder.m";
     private static final Set<String> HOOKED_ZIP_CLASSES = Collections.newSetFromMap(new ConcurrentHashMap<String, Boolean>());
     private static final Set<String> HOOKED_LIKE_LISTENERS = Collections.newSetFromMap(new ConcurrentHashMap<String, Boolean>());
     private static final Set<String> HOOKED_HOLDER_TRACE = Collections.newSetFromMap(new ConcurrentHashMap<String, Boolean>());
+    private static final Set<String> HOOKED_COMMENT_TAG_CLASSES = Collections.newSetFromMap(new ConcurrentHashMap<String, Boolean>());
+    private static final Set<String> HOOKED_COMMENT_FOLD_CLASSES = Collections.newSetFromMap(new ConcurrentHashMap<String, Boolean>());
+    private static final Set<String> HOOKED_ADAPTER_METHODS = Collections.newSetFromMap(new ConcurrentHashMap<String, Boolean>());
+    private static final ConcurrentHashMap<String, Boolean> COMMENT_ITEM_CLASS_CACHE = new ConcurrentHashMap<>();
+    private static final ConcurrentHashMap<String, Boolean> LOG_ONCE = new ConcurrentHashMap<>();
     private static volatile String LAST_EXTRA = null;
     private static volatile Object LAST_SORT_MODE = null;
     private static volatile WeakReference<Object> LAST_COMMENT_ADAPTER = new WeakReference<>(null);
+    private static volatile java.lang.reflect.Method LAST_ADAPTER_LIST_METHOD = null;
+    private static volatile int LAST_ADAPTER_LIST_INDEX = 0;
+    private static volatile Class<?> RV_ADAPTER_CLASS = null;
+    private static final Object ADAPTER_METHOD_LOCK = new Object();
+    private static final ArrayList<AdapterMethod> ADAPTER_METHODS = new ArrayList<>();
+    private static final ConcurrentHashMap<String, AdapterMethod> ADAPTER_METHOD_MAP = new ConcurrentHashMap<>();
     private static volatile Field COMMENT_ID_FIELD = null;
     private static final ThreadLocal<Boolean> RESUBMITTING = new ThreadLocal<>();
     private static volatile android.os.Handler MAIN_HANDLER = null;
@@ -122,6 +134,8 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         safeHook("hookZipDataSource", new Runnable() { @Override public void run() { hookZipDataSource(APP_CL); } });
         safeHook("hookDetailListDataSource", new Runnable() { @Override public void run() { hookDetailListDataSource(APP_CL); } });
         safeHook("hookCommentListAdapter", new Runnable() { @Override public void run() { hookCommentListAdapter(APP_CL); } });
+        safeHook("hookListAdapterSubmit", new Runnable() { @Override public void run() { hookListAdapterSubmit(APP_CL); } });
+        safeHook("hookAsyncListDifferSubmit", new Runnable() { @Override public void run() { hookAsyncListDifferSubmit(APP_CL); } });
         safeHook("hookH0ClickTrace", new Runnable() { @Override public void run() { hookH0ClickTrace(APP_CL); } });
         safeHook("hookLikeClickListener", new Runnable() { @Override public void run() { hookLikeClickListener(APP_CL); } });
     }
@@ -265,22 +279,256 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                 LAST_COMMENT_ADAPTER = new WeakReference<>(adapter);
             }
         });
-        XposedBridge.hookAllMethods(c, "b1", new XC_MethodHook() {
-            @Override
-            protected void beforeHookedMethod(MethodHookParam param) {
-                if (Boolean.TRUE.equals(RESUBMITTING.get())) return;
-                if (param.args == null || param.args.length == 0) return;
-                Object listObj = param.args[0];
-                if (!(listObj instanceof List)) return;
-                List<?> list = (List<?>) listObj;
-                prefetchFoldList(list);
-                List<?> replaced = replaceZipCardsInList(list, "CommentListAdapter.b1");
-                if (replaced != null) {
-                    param.args[0] = replaced;
+        hookCommentListAdapterMethods(c);
+        hookCommentViewHolderBind(c, cl);
+    }
+
+    private static void hookListAdapterSubmit(ClassLoader cl) {
+        Class<?> c = XposedHelpers.findClassIfExists(
+                "androidx.recyclerview.widget.ListAdapter",
+                cl
+        );
+        if (c == null) {
+            log("ListAdapter class not found");
+            return;
+        }
+        hookSubmitListMethods(c, "ListAdapter");
+    }
+
+    private static void hookAsyncListDifferSubmit(ClassLoader cl) {
+        Class<?> c = XposedHelpers.findClassIfExists(
+                "androidx.recyclerview.widget.AsyncListDiffer",
+                cl
+        );
+        if (c == null) {
+            log("AsyncListDiffer class not found");
+            return;
+        }
+        hookSubmitListMethods(c, "AsyncListDiffer");
+    }
+
+    private static void hookSubmitListMethods(Class<?> c, String tag) {
+        if (c == null) return;
+        java.lang.reflect.Method[] methods;
+        try {
+            methods = c.getDeclaredMethods();
+        } catch (Throwable ignored) {
+            return;
+        }
+        for (java.lang.reflect.Method m : methods) {
+            if (m == null) continue;
+            if (!"submitList".equals(m.getName())) continue;
+            Class<?>[] pts = m.getParameterTypes();
+            if (pts == null || pts.length == 0) continue;
+            int listIndex = -1;
+            for (int i = 0; i < pts.length; i++) {
+                if (List.class.isAssignableFrom(pts[i])) {
+                    listIndex = i;
+                    break;
                 }
             }
-        });
-        hookCommentViewHolderBind(c, cl);
+            if (listIndex < 0) continue;
+            String key = c.getName() + "#" + m.getName() + "/" + pts.length + "@" + listIndex;
+            if (!HOOKED_ADAPTER_METHODS.add(key)) continue;
+            final java.lang.reflect.Method targetMethod = m;
+            final int targetIndex = listIndex;
+            XposedBridge.hookMethod(targetMethod, new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam param) {
+                    if (Boolean.TRUE.equals(RESUBMITTING.get())) return;
+                    if (param.args == null || param.args.length <= targetIndex) return;
+                    Object listObj = param.args[targetIndex];
+                    if (!(listObj instanceof List)) return;
+                    List<?> list = (List<?>) listObj;
+                    Object owner = param.thisObject;
+                    boolean looks = looksLikeCommentList(list);
+                    if (!looks && !isCommentAdapter(owner)) return;
+                    if (looks) {
+                        markCommentAdapter(owner);
+                        Object adapter = getAdapterFromSubmitOwner(owner);
+                        if (adapter != null) {
+                            markCommentAdapter(adapter);
+                            LAST_COMMENT_ADAPTER = new WeakReference<>(adapter);
+                        } else {
+                            LAST_COMMENT_ADAPTER = new WeakReference<>(owner);
+                        }
+                        rememberCommentAdapterMethod(targetMethod, targetIndex);
+                    }
+                    prefetchFoldList(list);
+                    List<?> replaced = replaceZipCardsInList(list, tag + ".submitList");
+                    if (replaced != null) {
+                        param.args[targetIndex] = replaced;
+                    }
+                }
+            });
+        }
+    }
+
+    private static Object getAdapterFromSubmitOwner(Object owner) {
+        if (owner == null) return null;
+        if (isRecyclerViewAdapter(owner)) return owner;
+        Object adapter = findAdapterFromDiffer(owner);
+        if (isRecyclerViewAdapter(adapter)) return adapter;
+        return null;
+    }
+
+    private static void hookCommentListAdapterMethods(Class<?> c) {
+        if (c == null) return;
+        java.lang.reflect.Method[] methods;
+        try {
+            methods = c.getDeclaredMethods();
+        } catch (Throwable ignored) {
+            return;
+        }
+        int hooked = 0;
+        for (java.lang.reflect.Method m : methods) {
+            if (m == null) continue;
+            Class<?>[] pts = m.getParameterTypes();
+            if (pts == null || pts.length == 0) continue;
+            int listIndex = -1;
+            for (int i = 0; i < pts.length; i++) {
+                if (List.class.isAssignableFrom(pts[i])) {
+                    listIndex = i;
+                    break;
+                }
+            }
+            if (listIndex < 0) continue;
+            String key = c.getName() + "#" + m.getName() + "/" + pts.length + "@" + listIndex;
+            if (!HOOKED_ADAPTER_METHODS.add(key)) continue;
+            hooked++;
+            final java.lang.reflect.Method targetMethod = m;
+            final int targetIndex = listIndex;
+            XposedBridge.hookMethod(targetMethod, new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam param) {
+                    if (Boolean.TRUE.equals(RESUBMITTING.get())) return;
+                    if (param.args == null || param.args.length <= targetIndex) return;
+                    Object listObj = param.args[targetIndex];
+                    if (!(listObj instanceof List)) return;
+                    List<?> list = (List<?>) listObj;
+                    if (!looksLikeCommentList(list)) return;
+                    rememberCommentAdapterMethod(targetMethod, targetIndex);
+                    prefetchFoldList(list);
+                    List<?> replaced = replaceZipCardsInList(list, "CommentListAdapter." + targetMethod.getName());
+                    if (replaced != null) {
+                        param.args[targetIndex] = replaced;
+                    }
+                }
+            });
+        }
+        if (hooked == 0) {
+            log("CommentListAdapter methods not found");
+        }
+    }
+
+    private static void rememberCommentAdapterMethod(java.lang.reflect.Method m, int listIndex) {
+        if (m == null) return;
+        if (LAST_ADAPTER_LIST_METHOD == m && LAST_ADAPTER_LIST_INDEX == listIndex) return;
+        LAST_ADAPTER_LIST_METHOD = m;
+        LAST_ADAPTER_LIST_INDEX = listIndex;
+        logOnce("adapter.list." + m.getDeclaringClass().getName() + "." + m.getName(),
+                "adapter.list method=" + m.getDeclaringClass().getName() + "#" + m.getName() + " idx=" + listIndex);
+        String key = m.getDeclaringClass().getName() + "#" + m.getName() + "@" + listIndex;
+        AdapterMethod am = ADAPTER_METHOD_MAP.get(key);
+        if (am == null) {
+            am = new AdapterMethod(key, m, listIndex);
+            ADAPTER_METHOD_MAP.put(key, am);
+        } else {
+            am.method = m;
+            am.listIndex = listIndex;
+        }
+        synchronized (ADAPTER_METHOD_LOCK) {
+            for (int i = ADAPTER_METHODS.size() - 1; i >= 0; i--) {
+                AdapterMethod old = ADAPTER_METHODS.get(i);
+                if (old == null) {
+                    ADAPTER_METHODS.remove(i);
+                    continue;
+                }
+                if (key.equals(old.key)) {
+                    ADAPTER_METHODS.remove(i);
+                }
+            }
+            ADAPTER_METHODS.add(0, am);
+        }
+    }
+
+    private static boolean looksLikeCommentList(List<?> list) {
+        if (list == null || list.isEmpty()) return false;
+        int max = Math.min(30, list.size());
+        int comment = 0;
+        int zip = 0;
+        for (int i = 0; i < max; i++) {
+            Object item = list.get(i);
+            if (item == null) continue;
+            if (isCommentItem(item)) {
+                comment++;
+                if (comment >= 2) break;
+                continue;
+            }
+            if (looksLikeZipCard(item) || isZipCardClass(item)) {
+                zip++;
+            }
+        }
+        return comment > 0 || zip > 0;
+    }
+
+    private static boolean isCommentAdapter(Object adapter) {
+        if (adapter == null) return false;
+        try {
+            Object v = XposedHelpers.getAdditionalInstanceField(adapter, "BiliFoldsIsCommentAdapter");
+            return Boolean.TRUE.equals(v);
+        } catch (Throwable ignored) {
+            return false;
+        }
+    }
+
+    private static void markCommentAdapter(Object adapter) {
+        if (adapter == null) return;
+        try {
+            XposedHelpers.setAdditionalInstanceField(adapter, "BiliFoldsIsCommentAdapter", Boolean.TRUE);
+        } catch (Throwable ignored) {
+        }
+    }
+
+    private static Object findAdapterFromDiffer(Object differ) {
+        if (differ == null) return null;
+        try {
+            Field[] fields = differ.getClass().getDeclaredFields();
+            for (Field f : fields) {
+                if (f == null) continue;
+                try {
+                    f.setAccessible(true);
+                    Object v = f.get(differ);
+                    if (isRecyclerViewAdapter(v)) return v;
+                } catch (Throwable ignored) {
+                }
+            }
+        } catch (Throwable ignored) {
+        }
+        return null;
+    }
+
+    private static boolean isRecyclerViewAdapter(Object obj) {
+        if (obj == null) return false;
+        Class<?> c = getRecyclerViewAdapterClass(obj.getClass().getClassLoader());
+        return c != null && c.isInstance(obj);
+    }
+
+    private static Class<?> getRecyclerViewAdapterClass(ClassLoader cl) {
+        if (RV_ADAPTER_CLASS != null) return RV_ADAPTER_CLASS;
+        if (cl == null) cl = APP_CL;
+        try {
+            Class<?> c = XposedHelpers.findClassIfExists(
+                    "androidx.recyclerview.widget.RecyclerView$Adapter",
+                    cl
+            );
+            if (c != null) {
+                RV_ADAPTER_CLASS = c;
+            }
+            return c;
+        } catch (Throwable ignored) {
+            return null;
+        }
     }
 
     private static void hookLikeClickListener(ClassLoader cl) {
@@ -2494,43 +2742,85 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
 
     private static boolean callCommentAdapterB1(Object adapter, List<?> list) {
         if (adapter == null || list == null) return false;
+        java.lang.reflect.Method m = LAST_ADAPTER_LIST_METHOD;
+        int listIndex = LAST_ADAPTER_LIST_INDEX;
+        if (m != null && m.getDeclaringClass().isInstance(adapter)) {
+            if (callCommentAdapterMethod(adapter, m, list, listIndex)) {
+                return true;
+            }
+        }
+        AdapterMethod[] candidates = snapshotAdapterMethods();
+        if (candidates != null) {
+            for (AdapterMethod am : candidates) {
+                if (am == null || am.method == null) continue;
+                java.lang.reflect.Method method = am.method;
+                if (!method.getDeclaringClass().isInstance(adapter)) continue;
+                if (callCommentAdapterMethod(adapter, method, list, am.listIndex)) {
+                    LAST_ADAPTER_LIST_METHOD = method;
+                    LAST_ADAPTER_LIST_INDEX = am.listIndex;
+                    return true;
+                }
+            }
+        }
         try {
             java.lang.reflect.Method[] methods = adapter.getClass().getDeclaredMethods();
-            for (java.lang.reflect.Method m : methods) {
-                if (!"b1".equals(m.getName())) continue;
-                Class<?>[] pts = m.getParameterTypes();
+            for (java.lang.reflect.Method method : methods) {
+                if (!"b1".equals(method.getName())) continue;
+                Class<?>[] pts = method.getParameterTypes();
                 if (pts == null || pts.length == 0) continue;
-                if (!pts[0].isAssignableFrom(list.getClass()) && !List.class.isAssignableFrom(pts[0])) {
-                    continue;
-                }
-                Object[] args = new Object[pts.length];
-                args[0] = list;
-                for (int i = 1; i < pts.length; i++) {
-                    Class<?> t = pts[i];
-                    if (t == boolean.class || t == Boolean.class) {
-                        args[i] = false;
-                    } else if (t == int.class || t == Integer.class) {
-                        args[i] = 0;
-                    } else if (t == long.class || t == Long.class) {
-                        args[i] = 0L;
-                    } else if (t == float.class || t == Float.class) {
-                        args[i] = 0f;
-                    } else if (t == double.class || t == Double.class) {
-                        args[i] = 0d;
-                    } else {
-                        args[i] = null;
-                    }
-                }
-                try {
-                    m.setAccessible(true);
-                    m.invoke(adapter, args);
+                if (!List.class.isAssignableFrom(pts[0])) continue;
+                if (callCommentAdapterMethod(adapter, method, list, 0)) {
                     return true;
-                } catch (Throwable ignored) {
                 }
             }
         } catch (Throwable ignored) {
         }
         return false;
+    }
+
+    private static AdapterMethod[] snapshotAdapterMethods() {
+        synchronized (ADAPTER_METHOD_LOCK) {
+            if (ADAPTER_METHODS.isEmpty()) return null;
+            return ADAPTER_METHODS.toArray(new AdapterMethod[0]);
+        }
+    }
+
+    private static boolean callCommentAdapterMethod(Object adapter, java.lang.reflect.Method method, List<?> list, int listIndex) {
+        if (adapter == null || method == null || list == null) return false;
+        try {
+            Class<?>[] pts = method.getParameterTypes();
+            if (pts == null || listIndex < 0 || listIndex >= pts.length) return false;
+            if (!List.class.isAssignableFrom(pts[listIndex])) return false;
+            Object[] args = buildDefaultArgs(pts);
+            args[listIndex] = list;
+            method.setAccessible(true);
+            method.invoke(adapter, args);
+            return true;
+        } catch (Throwable ignored) {
+            return false;
+        }
+    }
+
+    private static Object[] buildDefaultArgs(Class<?>[] pts) {
+        if (pts == null || pts.length == 0) return new Object[0];
+        Object[] args = new Object[pts.length];
+        for (int i = 0; i < pts.length; i++) {
+            Class<?> t = pts[i];
+            if (t == boolean.class || t == Boolean.class) {
+                args[i] = false;
+            } else if (t == int.class || t == Integer.class) {
+                args[i] = 0;
+            } else if (t == long.class || t == Long.class) {
+                args[i] = 0L;
+            } else if (t == float.class || t == Float.class) {
+                args[i] = 0f;
+            } else if (t == double.class || t == Double.class) {
+                args[i] = 0d;
+            } else {
+                args[i] = null;
+            }
+        }
+        return args;
     }
 
     private static void cacheFoldListResult(String tag, String offset, Object obj) {
@@ -2606,6 +2896,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             mergeUniqueById(byRoot, bucket);
             putRootForOffset(realOffset, scopeKey, rootId);
         }
+        logOnce("cache.fold." + realOffset, "cache fold tag=" + tag + " offset=" + realOffset + " size=" + bucket.size());
         tryUpdateCommentAdapterList(realOffset);
     }
 
@@ -2708,14 +2999,19 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
     }
 
     private static void hookCommentItemTags(ClassLoader cl) {
-        Class<?> c = XposedHelpers.findClassIfExists(
-                "com.bilibili.app.comment3.data.model.CommentItem",
-                cl
-        );
+        String name = getCommentItemClassName();
+        Class<?> c = XposedHelpers.findClassIfExists(name, cl);
         if (c == null) {
-            log("CommentItem class not found");
+            log("CommentItem class not found: " + name);
             return;
         }
+        COMMENT_ITEM_CLASS = c.getName();
+        hookCommentItemTagsByClass(c);
+    }
+
+    private static void hookCommentItemTagsByClass(Class<?> c) {
+        if (c == null) return;
+        if (!HOOKED_COMMENT_TAG_CLASSES.add(c.getName())) return;
         try {
             java.lang.reflect.Method[] methods = c.getDeclaredMethods();
             for (java.lang.reflect.Method m : methods) {
@@ -2745,14 +3041,19 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
     }
 
     private static void hookCommentItemFoldFlags(ClassLoader cl) {
-        Class<?> c = XposedHelpers.findClassIfExists(
-                "com.bilibili.app.comment3.data.model.CommentItem",
-                cl
-        );
+        String name = getCommentItemClassName();
+        Class<?> c = XposedHelpers.findClassIfExists(name, cl);
         if (c == null) {
-            log("CommentItem class not found");
+            log("CommentItem class not found: " + name);
             return;
         }
+        COMMENT_ITEM_CLASS = c.getName();
+        hookCommentItemFoldFlagsByClass(c);
+    }
+
+    private static void hookCommentItemFoldFlagsByClass(Class<?> c) {
+        if (c == null) return;
+        if (!HOOKED_COMMENT_FOLD_CLASSES.add(c.getName())) return;
         hookBooleanMethodReturnFalse(c, "D");
         hookBooleanMethodReturnFalse(c, "isFolded");
         hookBooleanMethodReturnFalse(c, "getIsFolded");
@@ -3014,6 +3315,10 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             }
             return withTips;
         }
+        logOnce("replace.hit", "replace hit tag=" + tag
+                + " size=" + list.size()
+                + " zip=" + sawZipCard
+                + " subject=" + (subjectKey == null ? "" : subjectKey));
         return base;
     }
 
@@ -3332,7 +3637,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                 "com.bilibili.app.comment3.data.source.v1.e",
                 cl
         );
-        if (foldReqCls == null || mossCls == null || mapCls == null) {
+        if (foldReqCls == null || mossCls == null) {
             return null;
         }
         Object reqBuilder = XposedHelpers.callStaticMethod(foldReqCls, "newBuilder");
@@ -3367,9 +3672,41 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             moss = XposedHelpers.newInstance(mossCls, null, 0, null, 7, null);
         }
         if (moss == null) return null;
-        Object resp = XposedHelpers.callMethod(moss, "foldList", req);
+        Object resp = tryCallFoldList(moss, req);
         if (resp == null) return null;
-        return XposedHelpers.callStaticMethod(mapCls, "D0", resp, withChildren);
+        if (mapCls != null) {
+            try {
+                Object mapped = XposedHelpers.callStaticMethod(mapCls, "D0", resp, withChildren);
+                if (mapped != null) return mapped;
+            } catch (Throwable ignored) {
+            }
+        }
+        return resp;
+    }
+
+    private static Object tryCallFoldList(Object moss, Object req) {
+        if (moss == null || req == null) return null;
+        try {
+            return XposedHelpers.callMethod(moss, "foldList", req);
+        } catch (Throwable ignored) {
+        }
+        java.lang.reflect.Method[] methods = moss.getClass().getDeclaredMethods();
+        for (java.lang.reflect.Method m : methods) {
+            String name = m.getName();
+            if (name == null || !name.toLowerCase().contains("fold")) continue;
+            Class<?>[] pts = m.getParameterTypes();
+            if (pts == null || pts.length != 1) continue;
+            if (!pts[0].isAssignableFrom(req.getClass())) continue;
+            try {
+                m.setAccessible(true);
+                Object resp = m.invoke(moss, req);
+                if (resp != null) {
+                    return resp;
+                }
+            } catch (Throwable ignored) {
+            }
+        }
+        return null;
     }
 
     private static Object fetchDetailList(Object subjectId, long rootId, String extra) {
@@ -3739,9 +4076,122 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         OFFSET_TO_ROOT.put(offset, rootId);
     }
 
-    private static boolean isCommentItem(Object item) {
-        return item != null && "com.bilibili.app.comment3.data.model.CommentItem".equals(item.getClass().getName());
+    private static String getCommentItemClassName() {
+        String name = COMMENT_ITEM_CLASS;
+        if (name == null || name.isEmpty()) {
+            name = "com.bilibili.app.comment3.data.model.CommentItem";
+        }
+        return name;
     }
+
+    private static boolean isCommentItem(Object item) {
+        if (item == null) return false;
+        String cls = item.getClass().getName();
+        String known = COMMENT_ITEM_CLASS;
+        if (known != null && !known.isEmpty() && known.equals(cls)) return true;
+        Boolean cached = COMMENT_ITEM_CLASS_CACHE.get(cls);
+        if (cached != null) return cached;
+        boolean ok = looksLikeCommentItem(item);
+        COMMENT_ITEM_CLASS_CACHE.put(cls, ok);
+        if (ok) {
+            COMMENT_ITEM_CLASS = cls;
+            hookCommentItemTagsByClass(item.getClass());
+            hookCommentItemFoldFlagsByClass(item.getClass());
+            logOnce("comment.item.class", "comment item class=" + cls);
+        }
+        return ok;
+    }
+
+    private static boolean looksLikeCommentItem(Object item) {
+        if (item == null) return false;
+        Class<?> c = item.getClass();
+        String name = c.getName();
+        if (name == null) return false;
+        String ln = name.toLowerCase();
+        if (ln.contains("$") && !ln.endsWith("commentitem")) {
+            return false;
+        }
+        boolean hasId = hasNumberFieldOrMethod(c, new String[]{"id", "rpid", "replyid"});
+        if (!hasId) return false;
+        boolean hasRoot = hasNumberFieldOrMethod(c, new String[]{"root", "parent"});
+        boolean hasContent = hasStringFieldOrMethod(c, new String[]{"content", "message", "msg", "text"});
+        boolean hasTime = hasNumberFieldOrMethod(c, new String[]{"ctime", "time", "date", "ts"});
+        boolean hasControl = hasFieldTypeNameContains(c, "ReplyControl");
+        if (hasRoot || hasContent || hasTime || hasControl) return true;
+        return ln.contains("comment") || ln.contains("reply");
+    }
+
+    private static boolean hasNumberFieldOrMethod(Class<?> c, String[] keys) {
+        if (c == null || keys == null) return false;
+        try {
+            for (java.lang.reflect.Method m : c.getDeclaredMethods()) {
+                String n = m.getName();
+                if (n == null) continue;
+                String ln = n.toLowerCase();
+                if (!containsAny(ln, keys)) continue;
+                Class<?> rt = m.getReturnType();
+                if (rt != null && (rt.isPrimitive() || Number.class.isAssignableFrom(rt))) {
+                    return true;
+                }
+            }
+        } catch (Throwable ignored) {
+        }
+        try {
+            for (Field f : c.getDeclaredFields()) {
+                String n = f.getName();
+                if (n == null) continue;
+                String ln = n.toLowerCase();
+                if (!containsAny(ln, keys)) continue;
+                Class<?> t = f.getType();
+                if (t != null && (t.isPrimitive() || Number.class.isAssignableFrom(t))) {
+                    return true;
+                }
+            }
+        } catch (Throwable ignored) {
+        }
+        return false;
+    }
+
+    private static boolean hasStringFieldOrMethod(Class<?> c, String[] keys) {
+        if (c == null || keys == null) return false;
+        try {
+            for (java.lang.reflect.Method m : c.getDeclaredMethods()) {
+                String n = m.getName();
+                if (n == null) continue;
+                String ln = n.toLowerCase();
+                if (!containsAny(ln, keys)) continue;
+                Class<?> rt = m.getReturnType();
+                if (rt == String.class) return true;
+            }
+        } catch (Throwable ignored) {
+        }
+        try {
+            for (Field f : c.getDeclaredFields()) {
+                String n = f.getName();
+                if (n == null) continue;
+                String ln = n.toLowerCase();
+                if (!containsAny(ln, keys)) continue;
+                if (f.getType() == String.class) return true;
+            }
+        } catch (Throwable ignored) {
+        }
+        return false;
+    }
+
+    private static boolean hasFieldTypeNameContains(Class<?> c, String token) {
+        if (c == null || token == null || token.isEmpty()) return false;
+        try {
+            for (Field f : c.getDeclaredFields()) {
+                Class<?> t = f.getType();
+                if (t == null) continue;
+                String n = t.getName();
+                if (n != null && n.contains(token)) return true;
+            }
+        } catch (Throwable ignored) {
+        }
+        return false;
+    }
+
 
     private static int findCommentIndexById(List<?> list, long id) {
         if (list == null || id == 0L) return -1;
@@ -4342,16 +4792,17 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             return FOLD_TAG_TEMPLATE;
         }
         try {
+            String base = getCommentItemClassName();
             Class<?> tagCls = XposedHelpers.findClassIfExists(
-                    "com.bilibili.app.comment3.data.model.CommentItem$g",
+                    base + "$g",
                     cl
             );
             Class<?> displayCls = XposedHelpers.findClassIfExists(
-                    "com.bilibili.app.comment3.data.model.CommentItem$g$a",
+                    base + "$g$a",
                     cl
             );
             Class<?> labelCls = XposedHelpers.findClassIfExists(
-                    "com.bilibili.app.comment3.data.model.CommentItem$g$b",
+                    base + "$g$b",
                     cl
             );
             if (tagCls == null || displayCls == null || labelCls == null) return null;
@@ -4388,6 +4839,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             ClassLoader cl = item.getClass().getClassLoader();
             if (cl == null) cl = APP_CL;
             hookZipCardViewByName(cls, cl, false);
+            logOnce("zip.card.class", "zip card class=" + cls);
             return true;
         }
         return false;
@@ -4893,6 +5345,25 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
     private static void log(String msg) {
         XposedBridge.log(TAG + ": " + msg);
         Log.i(TAG, msg);
+    }
+
+    private static void logOnce(String key, String msg) {
+        if (key == null || key.isEmpty()) return;
+        if (LOG_ONCE.putIfAbsent(key, Boolean.TRUE) == null) {
+            log(msg);
+        }
+    }
+
+    private static final class AdapterMethod {
+        final String key;
+        volatile java.lang.reflect.Method method;
+        volatile int listIndex;
+
+        AdapterMethod(String key, java.lang.reflect.Method method, int listIndex) {
+            this.key = key;
+            this.method = method;
+            this.listIndex = listIndex;
+        }
     }
 }
 
