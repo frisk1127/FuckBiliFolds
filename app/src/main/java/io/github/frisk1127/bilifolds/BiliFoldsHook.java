@@ -106,6 +106,8 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
     private static volatile java.lang.reflect.Method LAST_ADAPTER_LIST_METHOD = null;
     private static volatile int LAST_ADAPTER_LIST_INDEX = 0;
     private static volatile Class<?> RV_ADAPTER_CLASS = null;
+    private static volatile long LAST_SUBJECT_OID = 0L;
+    private static volatile long LAST_SUBJECT_TYPE = 0L;
     private static final Object ADAPTER_METHOD_LOCK = new Object();
     private static final ArrayList<AdapterMethod> ADAPTER_METHODS = new ArrayList<>();
     private static final ConcurrentHashMap<String, AdapterMethod> ADAPTER_METHOD_MAP = new ConcurrentHashMap<>();
@@ -3560,29 +3562,43 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         }
         if (AUTO_FETCHING.putIfAbsent(fetchKey, Boolean.TRUE) != null) return;
         final Object subjectId = LAST_SUBJECT_ID == null ? null : LAST_SUBJECT_ID.get();
-        if (subjectId == null) {
+        if (subjectId == null && !ensureSubjectInfoFromCache()) {
             AUTO_FETCHING.remove(fetchKey);
             return;
         }
-        String realSubjectKey = subjectKeyFromSubject(subjectId);
-        if (realSubjectKey != null) {
-            LAST_SUBJECT_KEY = realSubjectKey;
+        if (subjectId != null) {
+            String realSubjectKey = subjectKeyFromSubject(subjectId);
+            if (realSubjectKey != null) {
+                LAST_SUBJECT_KEY = realSubjectKey;
+            }
+        } else if (LAST_SUBJECT_OID > 0 && LAST_SUBJECT_TYPE > 0) {
+            String realSubjectKey = subjectKeyFromInfo(LAST_SUBJECT_OID, LAST_SUBJECT_TYPE);
+            if (realSubjectKey != null) {
+                LAST_SUBJECT_KEY = realSubjectKey;
+            }
+            logOnce("subject.info.fallback", "subject info fallback oid=" + LAST_SUBJECT_OID + " type=" + LAST_SUBJECT_TYPE);
         }
         final String extra = LAST_EXTRA;
         final long rootIdFinal = rootId != 0L ? rootId : getRootForOffset(offset, subjectKey);
+        final long oidFinal = LAST_SUBJECT_OID;
+        final long typeFinal = LAST_SUBJECT_TYPE;
         new Thread(new Runnable() {
             @Override
             public void run() {
                 try {
                     if (!hasOffset && rootIdFinal != 0L) {
-                        Object detail = fetchDetailList(subjectId, rootIdFinal, extra);
+                        Object detail = subjectId != null
+                                ? fetchDetailList(subjectId, rootIdFinal, extra)
+                                : fetchDetailListByInfo(oidFinal, typeFinal, rootIdFinal, extra);
                         if (detail != null) {
                             cacheFoldListResult("auto.detail.root", fetchKey, detail);
                             return;
                         }
                     }
                     if (rootIdFinal != 0L) {
-                        Object detail = fetchDetailList(subjectId, rootIdFinal, extra);
+                        Object detail = subjectId != null
+                                ? fetchDetailList(subjectId, rootIdFinal, extra)
+                                : fetchDetailListByInfo(oidFinal, typeFinal, rootIdFinal, extra);
                         if (detail != null) {
                             cacheFoldListResult("auto.detail", offset, detail);
                             return;
@@ -3591,7 +3607,9 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                     String curOffset = offset;
                     int pages = 0;
                     while (curOffset != null && !curOffset.isEmpty() && pages < 5) {
-                        Object p0 = fetchFoldList(subjectId, curOffset, extra, true, rootIdFinal);
+                        Object p0 = subjectId != null
+                                ? fetchFoldList(subjectId, curOffset, extra, true, rootIdFinal)
+                                : fetchFoldListByInfo(oidFinal, typeFinal, curOffset, extra, true, rootIdFinal);
                         if (p0 != null) {
                             cacheFoldListResult("auto.fetch", curOffset, p0);
                             List<?> p0List = extractList(p0);
@@ -3599,7 +3617,9 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                                 Object first = p0List.get(0);
                                 long rid = getRootId(first);
                                 if (rid != 0L) {
-                                    Object detail = fetchDetailList(subjectId, rid, extra);
+                                    Object detail = subjectId != null
+                                            ? fetchDetailList(subjectId, rid, extra)
+                                            : fetchDetailListByInfo(oidFinal, typeFinal, rid, extra);
                                     if (detail != null) {
                                         cacheFoldListResult("auto.detail", curOffset, detail);
                                     }
@@ -3640,6 +3660,69 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         if (oid == 0 || type == 0) {
             return null;
         }
+        Class<?> foldReqCls = XposedHelpers.findClassIfExists(
+                "com.bapis.bilibili.main.community.reply.v1.FoldListReq",
+                cl
+        );
+        Class<?> mossCls = XposedHelpers.findClassIfExists(
+                "com.bapis.bilibili.main.community.reply.v1.ReplyMoss",
+                cl
+        );
+        Class<?> mapCls = XposedHelpers.findClassIfExists(
+                "com.bilibili.app.comment3.data.source.v1.e",
+                cl
+        );
+        if (foldReqCls == null || mossCls == null) {
+            return null;
+        }
+        Object reqBuilder = XposedHelpers.callStaticMethod(foldReqCls, "newBuilder");
+        if (reqBuilder == null) return null;
+        XposedHelpers.callMethod(reqBuilder, "setOid", oid);
+        XposedHelpers.callMethod(reqBuilder, "setType", type);
+        XposedHelpers.callMethod(reqBuilder, "setExtra", extra == null ? "" : extra);
+        Object pagination = setPaginationOnReqBuilder(reqBuilder, offset, cl);
+        tryCall(reqBuilder, "setWithChildren", withChildren);
+        int mode = getSortModeValue(LAST_SORT_MODE);
+        if (mode != Integer.MIN_VALUE) {
+            tryCall(reqBuilder, "setMode", mode);
+            tryCall(reqBuilder, "setSortMode", mode);
+            tryCall(reqBuilder, "setSort", mode);
+        }
+        if (pagination != null) {
+            trySetField(reqBuilder, "pagination_", pagination);
+            trySetField(reqBuilder, "foldPagination_", pagination);
+        }
+        if (mode != Integer.MIN_VALUE) {
+            trySetField(reqBuilder, "mode_", mode);
+        }
+        if (rootId != 0L) {
+            trySetField(reqBuilder, "root_", rootId);
+        }
+        Object req = XposedHelpers.callMethod(reqBuilder, "build");
+        if (req == null) return null;
+        Object moss;
+        try {
+            moss = XposedHelpers.newInstance(mossCls);
+        } catch (Throwable ignored) {
+            moss = XposedHelpers.newInstance(mossCls, null, 0, null, 7, null);
+        }
+        if (moss == null) return null;
+        Object resp = tryCallFoldList(moss, req);
+        if (resp == null) return null;
+        if (mapCls != null) {
+            try {
+                Object mapped = XposedHelpers.callStaticMethod(mapCls, "D0", resp, withChildren);
+                if (mapped != null) return mapped;
+            } catch (Throwable ignored) {
+            }
+        }
+        return resp;
+    }
+
+    private static Object fetchFoldListByInfo(long oid, long type, String offset, String extra, boolean withChildren, long rootId) {
+        if (oid == 0 || type == 0) return null;
+        ClassLoader cl = APP_CL;
+        if (cl == null) return null;
         Class<?> foldReqCls = XposedHelpers.findClassIfExists(
                 "com.bapis.bilibili.main.community.reply.v1.FoldListReq",
                 cl
@@ -3786,6 +3869,53 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         return mapped == null ? resp : mapped;
     }
 
+    private static Object fetchDetailListByInfo(long oid, long type, long rootId, String extra) {
+        if (rootId == 0L || oid == 0L || type == 0L) return null;
+        ClassLoader cl = APP_CL;
+        if (cl == null) return null;
+        Class<?> reqCls = XposedHelpers.findClassIfExists(
+                "com.bapis.bilibili.main.community.reply.v1.DetailListReq",
+                cl
+        );
+        Class<?> mossCls = XposedHelpers.findClassIfExists(
+                "com.bapis.bilibili.main.community.reply.v1.ReplyMoss",
+                cl
+        );
+        Class<?> mapCls = XposedHelpers.findClassIfExists(
+                "com.bilibili.app.comment3.data.source.v1.e",
+                cl
+        );
+        if (reqCls == null || mossCls == null) return null;
+        Object builder = XposedHelpers.callStaticMethod(reqCls, "newBuilder");
+        if (builder == null) return null;
+        XposedHelpers.callMethod(builder, "setOid", oid);
+        XposedHelpers.callMethod(builder, "setType", type);
+        tryCall(builder, "setRoot", rootId);
+        tryCall(builder, "setRootRpid", rootId);
+        tryCall(builder, "setRpid", 0L);
+        tryCall(builder, "setReplyId", rootId);
+        tryCall(builder, "setExtra", extra == null ? "" : extra);
+        int mode = getSortModeValue(LAST_SORT_MODE);
+        if (mode != Integer.MIN_VALUE) {
+            tryCall(builder, "setMode", mode);
+            tryCall(builder, "setSortMode", mode);
+            tryCall(builder, "setSort", mode);
+        }
+        Object req = XposedHelpers.callMethod(builder, "build");
+        if (req == null) return null;
+        Object moss;
+        try {
+            moss = XposedHelpers.newInstance(mossCls);
+        } catch (Throwable ignored) {
+            moss = XposedHelpers.newInstance(mossCls, null, 0, null, 7, null);
+        }
+        if (moss == null) return null;
+        Object resp = tryCallDetailList(moss, req);
+        if (resp == null) return null;
+        Object mapped = tryMapDetail(mapCls, resp, rootId);
+        return mapped == null ? resp : mapped;
+    }
+
     private static Object tryCallDetailList(Object moss, Object req) {
         if (moss == null || req == null) return null;
         try {
@@ -3901,6 +4031,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
     }
 
     private static void updateSubjectKey(Object subjectId) {
+        updateSubjectInfoFromSubject(subjectId);
         String key = subjectKeyFromSubject(subjectId);
         if (key != null) {
             if (LAST_SUBJECT_KEY == null || !key.equals(LAST_SUBJECT_KEY)) {
@@ -3913,6 +4044,14 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
 
     private static String getCurrentSubjectKey() {
         if (LAST_SUBJECT_KEY != null) return LAST_SUBJECT_KEY;
+        if (LAST_SUBJECT_OID > 0 && LAST_SUBJECT_TYPE > 0) {
+            String infoKey = subjectKeyFromInfo(LAST_SUBJECT_OID, LAST_SUBJECT_TYPE);
+            if (infoKey != null) {
+                LAST_SUBJECT_KEY = infoKey;
+                LAST_SCOPE_KEY = null;
+                return infoKey;
+            }
+        }
         Object subjectId = LAST_SUBJECT_ID == null ? null : LAST_SUBJECT_ID.get();
         String key = subjectKeyFromSubject(subjectId);
         if (key != null) {
@@ -4030,6 +4169,8 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         if (type == 0) type = callLongMethod(subjectId, "getType");
         if (type == 0) type = getLongField(subjectId, "type_");
         if (oid == 0 || type == 0) return null;
+        LAST_SUBJECT_OID = oid;
+        LAST_SUBJECT_TYPE = type;
         return oid + ":" + type;
     }
 
@@ -4042,7 +4183,54 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         if (type == 0) type = callLongMethod(item, "getObjType");
         if (type == 0) type = getLongField(item, "type_");
         if (oid == 0 || type == 0) return null;
+        LAST_SUBJECT_OID = oid;
+        LAST_SUBJECT_TYPE = type;
         return oid + ":" + type;
+    }
+
+    private static String subjectKeyFromInfo(long oid, long type) {
+        if (oid <= 0 || type <= 0) return null;
+        return oid + ":" + type;
+    }
+
+    private static void updateSubjectInfoFromSubject(Object subjectId) {
+        if (subjectId == null) return;
+        long oid = callLongMethod(subjectId, "a");
+        if (oid == 0) oid = callLongMethod(subjectId, "getOid");
+        if (oid == 0) oid = getLongField(subjectId, "oid_");
+        long type = callLongMethod(subjectId, "b");
+        if (type == 0) type = callLongMethod(subjectId, "getType");
+        if (type == 0) type = getLongField(subjectId, "type_");
+        if (oid == 0 || type == 0) return;
+        LAST_SUBJECT_OID = oid;
+        LAST_SUBJECT_TYPE = type;
+    }
+
+    private static boolean ensureSubjectInfoFromCache() {
+        if (LAST_SUBJECT_OID > 0 && LAST_SUBJECT_TYPE > 0) return true;
+        Object adapter = LAST_COMMENT_ADAPTER == null ? null : LAST_COMMENT_ADAPTER.get();
+        if (adapter == null) return false;
+        Object differ;
+        try {
+            differ = XposedHelpers.getObjectField(adapter, "c");
+        } catch (Throwable ignored) {
+            return false;
+        }
+        if (differ == null) return false;
+        Object listObj;
+        try {
+            listObj = XposedHelpers.callMethod(differ, "a");
+        } catch (Throwable ignored) {
+            return false;
+        }
+        if (!(listObj instanceof List)) return false;
+        List<?> list = (List<?>) listObj;
+        for (Object item : list) {
+            if (!isCommentItem(item)) continue;
+            String key = subjectKeyFromCommentItem(item);
+            if (key != null) return true;
+        }
+        return false;
     }
 
     private static String makeOffsetKey(String offset, String subjectKey) {
