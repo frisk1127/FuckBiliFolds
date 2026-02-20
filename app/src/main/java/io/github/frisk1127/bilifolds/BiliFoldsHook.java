@@ -109,6 +109,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
     private static volatile java.lang.reflect.Method LAST_ADAPTER_LIST_METHOD = null;
     private static volatile int LAST_ADAPTER_LIST_INDEX = 0;
     private static volatile Class<?> RV_ADAPTER_CLASS = null;
+    private static volatile Class<?> RV_VIEW_HOLDER_CLASS = null;
     private static volatile String COMMENT_ADAPTER_CLASS = "";
     private static volatile long LAST_SUBJECT_OID = 0L;
     private static volatile long LAST_SUBJECT_TYPE = 0L;
@@ -587,6 +588,12 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         return c != null && c.isInstance(obj);
     }
 
+    private static boolean isRecyclerViewViewHolder(Object obj) {
+        if (obj == null) return false;
+        Class<?> c = getRecyclerViewViewHolderClass(obj.getClass().getClassLoader());
+        return c != null && c.isInstance(obj);
+    }
+
     private static Object findCommentItemInHolder(Object holder) {
         if (holder == null) return null;
         Class<?> c = holder.getClass();
@@ -605,6 +612,8 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                     if (View.class.isAssignableFrom(t)) continue;
                     f.setAccessible(true);
                     Object v = f.get(holder);
+                    if (v == null || v == holder) continue;
+                    if (isRecyclerViewViewHolder(v)) continue;
                     if (isCommentItem(v)) return v;
                 }
             } catch (Throwable ignored) {
@@ -623,6 +632,23 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             );
             if (c != null) {
                 RV_ADAPTER_CLASS = c;
+            }
+            return c;
+        } catch (Throwable ignored) {
+            return null;
+        }
+    }
+
+    private static Class<?> getRecyclerViewViewHolderClass(ClassLoader cl) {
+        if (RV_VIEW_HOLDER_CLASS != null) return RV_VIEW_HOLDER_CLASS;
+        if (cl == null) cl = APP_CL;
+        try {
+            Class<?> c = XposedHelpers.findClassIfExists(
+                    "androidx.recyclerview.widget.RecyclerView$ViewHolder",
+                    cl
+            );
+            if (c != null) {
+                RV_VIEW_HOLDER_CLASS = c;
             }
             return c;
         } catch (Throwable ignored) {
@@ -4543,6 +4569,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
 
     private static boolean isNonCommentCandidate(Object item) {
         if (item == null) return true;
+        if (isRecyclerViewViewHolder(item)) return true;
         if (item instanceof View) return true;
         if (item instanceof CharSequence) return true;
         if (item instanceof Number) return true;
@@ -4550,9 +4577,15 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         if (item instanceof Map) return true;
         if (item instanceof java.util.Collection) return true;
         String name = item.getClass().getName();
-        if (name != null && (name.startsWith("java.util.Collections$")
-                || name.startsWith("kotlin.collections."))) {
-            return true;
+        if (name != null) {
+            String ln = name.toLowerCase();
+            if (ln.contains("viewholder") || ln.contains(".ui.holder")) {
+                return true;
+            }
+            if (name.startsWith("java.util.Collections$")
+                    || name.startsWith("kotlin.collections.")) {
+                return true;
+            }
         }
         return false;
     }
