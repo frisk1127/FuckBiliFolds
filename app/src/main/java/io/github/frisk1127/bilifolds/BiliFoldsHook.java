@@ -3352,20 +3352,68 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
     private static void hookCommentItemFoldFlagsByClass(Class<?> c) {
         if (c == null) return;
         if (!HOOKED_COMMENT_FOLD_CLASSES.add(c.getName())) return;
-        hookBooleanMethodReturnFalse(c, "D");
-        hookBooleanMethodReturnFalse(c, "isFolded");
-        hookBooleanMethodReturnFalse(c, "getIsFolded");
-        hookBooleanMethodReturnFalse(c, "getIsFoldedReply");
+        hookFoldFlagMethod(c, "D");
+        hookFoldFlagMethod(c, "isFolded");
+        hookFoldFlagMethod(c, "getIsFolded");
+        hookFoldFlagMethod(c, "getIsFoldedReply");
     }
 
-    private static void hookBooleanMethodReturnFalse(Class<?> c, String name) {
+    private static void hookFoldFlagMethod(Class<?> c, String name) {
         try {
-            XposedHelpers.findAndHookMethod(c, name, new XC_MethodReplacement() {
-                @Override
-                protected Object replaceHookedMethod(MethodHookParam param) {
-                    return false;
+            java.lang.reflect.Method[] methods = c.getDeclaredMethods();
+            for (java.lang.reflect.Method m : methods) {
+                if (m == null) continue;
+                if (!name.equals(m.getName())) continue;
+                Class<?>[] pts = m.getParameterTypes();
+                if (pts != null && pts.length != 0) continue;
+                Class<?> rt = m.getReturnType();
+                if (rt == boolean.class || rt == Boolean.class) {
+                    XposedBridge.hookMethod(m, new XC_MethodReplacement() {
+                        @Override
+                        protected Object replaceHookedMethod(MethodHookParam param) {
+                            return false;
+                        }
+                    });
+                    continue;
                 }
-            });
+                if (rt == int.class || rt == Integer.class
+                        || rt == short.class || rt == Short.class
+                        || rt == byte.class || rt == Byte.class) {
+                    XposedBridge.hookMethod(m, new XC_MethodReplacement() {
+                        @Override
+                        protected Object replaceHookedMethod(MethodHookParam param) {
+                            return 0;
+                        }
+                    });
+                    continue;
+                }
+                if (rt == long.class || rt == Long.class) {
+                    XposedBridge.hookMethod(m, new XC_MethodReplacement() {
+                        @Override
+                        protected Object replaceHookedMethod(MethodHookParam param) {
+                            return 0L;
+                        }
+                    });
+                    continue;
+                }
+                if (rt == float.class || rt == Float.class) {
+                    XposedBridge.hookMethod(m, new XC_MethodReplacement() {
+                        @Override
+                        protected Object replaceHookedMethod(MethodHookParam param) {
+                            return 0f;
+                        }
+                    });
+                    continue;
+                }
+                if (rt == double.class || rt == Double.class) {
+                    XposedBridge.hookMethod(m, new XC_MethodReplacement() {
+                        @Override
+                        protected Object replaceHookedMethod(MethodHookParam param) {
+                            return 0d;
+                        }
+                    });
+                }
+            }
         } catch (Throwable ignored) {
         }
     }
@@ -3393,20 +3441,53 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
 
     private static void hookZipCardViewByClass(Class<?> c) {
         if (c == null) return;
-        XposedBridge.hookAllMethods(c, "h", new XC_MethodHook() {
-            @Override
-            protected void afterHookedMethod(MethodHookParam param) {
-                if (!isAutoExpand(param.thisObject)) return;
-                param.setResult(AUTO_EXPAND_TEXT);
+        hookZipCardTextMethod(c, "h");
+        hookZipCardBoolMethod(c, "f");
+    }
+
+    private static void hookZipCardTextMethod(Class<?> c, String name) {
+        try {
+            java.lang.reflect.Method[] methods = c.getDeclaredMethods();
+            for (java.lang.reflect.Method m : methods) {
+                if (m == null) continue;
+                if (!name.equals(m.getName())) continue;
+                Class<?>[] pts = m.getParameterTypes();
+                if (pts != null && pts.length != 0) continue;
+                Class<?> rt = m.getReturnType();
+                if (rt == null) continue;
+                if (!CharSequence.class.isAssignableFrom(rt) && rt != String.class) continue;
+                XposedBridge.hookMethod(m, new XC_MethodHook() {
+                    @Override
+                    protected void afterHookedMethod(MethodHookParam param) {
+                        if (!isAutoExpand(param.thisObject)) return;
+                        param.setResult(AUTO_EXPAND_TEXT);
+                    }
+                });
             }
-        });
-        XposedBridge.hookAllMethods(c, "f", new XC_MethodHook() {
-            @Override
-            protected void afterHookedMethod(MethodHookParam param) {
-                if (!isAutoExpand(param.thisObject)) return;
-                param.setResult(false);
+        } catch (Throwable ignored) {
+        }
+    }
+
+    private static void hookZipCardBoolMethod(Class<?> c, String name) {
+        try {
+            java.lang.reflect.Method[] methods = c.getDeclaredMethods();
+            for (java.lang.reflect.Method m : methods) {
+                if (m == null) continue;
+                if (!name.equals(m.getName())) continue;
+                Class<?>[] pts = m.getParameterTypes();
+                if (pts != null && pts.length != 0) continue;
+                Class<?> rt = m.getReturnType();
+                if (rt != boolean.class && rt != Boolean.class) continue;
+                XposedBridge.hookMethod(m, new XC_MethodHook() {
+                    @Override
+                    protected void afterHookedMethod(MethodHookParam param) {
+                        if (!isAutoExpand(param.thisObject)) return;
+                        param.setResult(false);
+                    }
+                });
             }
-        });
+        } catch (Throwable ignored) {
+        }
     }
 
     private static void markAutoExpand(Object zipCard) {
