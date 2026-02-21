@@ -571,6 +571,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         int max = Math.min(30, list.size());
         int comment = 0;
         int zip = 0;
+        int weak = 0;
         for (int i = 0; i < max; i++) {
             Object item = list.get(i);
             if (item == null) continue;
@@ -581,9 +582,15 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             }
             if (looksLikeZipCard(item) || isZipCardClass(item)) {
                 zip++;
+                continue;
+            }
+            if (looksLikeCommentItem(item)) {
+                weak++;
             }
         }
-        return comment > 0 || zip > 0;
+        if (comment > 0 || zip > 0) return true;
+        if (weak > 0 && list.size() <= 3) return true;
+        return weak >= 2;
     }
 
     private static boolean isCommentAdapter(Object adapter) {
@@ -4726,15 +4733,16 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         boolean hasContent = hasStringFieldOrMethod(c, new String[]{"content", "message", "msg", "text"});
         boolean hasTime = hasNumberFieldOrMethod(c, new String[]{"ctime", "time", "date", "ts"});
         boolean hasControl = hasFieldTypeNameContains(c, "ReplyControl");
+        int listFields = countListFieldsByType(c);
         if (!hasControl && !ln.contains("comment") && !ln.contains("reply")) {
             return false;
         }
-        if (hasId && (hasRoot || hasContent || hasTime || hasControl)) return true;
+        if (!hasContent && !hasControl && listFields == 0) return false;
+        if (hasId && (hasContent || hasControl || listFields > 0)) return true;
         if (hasControl) return true;
         int score = 0;
         int numFields = countNumberFieldsByType(c);
         int strFields = countStringFieldsByType(c);
-        int listFields = countListFieldsByType(c);
         if (numFields >= 3) {
             score += 2;
         } else if (numFields >= 2) {
@@ -5662,17 +5670,26 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         if (pagination == null) {
             pagination = getObjectField(zipCard, "f380229b");
         }
-        if (pagination == null) return null;
-        String offset = callStringMethod(pagination, "e");
+        String offset = extractOffsetFromPagination(pagination);
         if (offset != null && !offset.isEmpty()) return offset;
-        offset = callStringMethod(pagination, "getNext");
+        offset = extractOffsetFromObj(zipCard);
         if (offset != null && !offset.isEmpty()) return offset;
-        offset = callStringMethod(pagination, "getOffset");
-        if (offset != null && !offset.isEmpty()) return offset;
-        offset = getStringField(pagination, "f380200e");
-        if (offset != null && !offset.isEmpty()) return offset;
-        offset = getStringField(pagination, "next_");
-        if (offset != null && !offset.isEmpty()) return offset;
+        try {
+            Field[] fields = zipCard.getClass().getDeclaredFields();
+            for (Field f : fields) {
+                if (f == null) continue;
+                Class<?> t = f.getType();
+                if (t == null || t.isPrimitive()) continue;
+                try {
+                    f.setAccessible(true);
+                    Object v = f.get(zipCard);
+                    offset = extractOffsetFromPagination(v);
+                    if (offset != null && !offset.isEmpty()) return offset;
+                } catch (Throwable ignored) {
+                }
+            }
+        } catch (Throwable ignored) {
+        }
         return null;
     }
 
