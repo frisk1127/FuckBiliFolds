@@ -3574,7 +3574,9 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                 }
                 List<Object> cached = getCachedFoldListForZip(item, offset, desc, subjectKey);
                 if (cached == null || cached.isEmpty()) {
-                    log("zip card cache miss offset=" + offset + " root=" + rootId + " tag=" + tag);
+                    if (DEBUG_VERBOSE) {
+                        log("zip card cache miss offset=" + offset + " root=" + rootId + " tag=" + tag);
+                    }
                     tryAutoFetchFoldList(offset, subjectKey, rootId);
                     markAutoExpand(item);
                     out.add(item);
