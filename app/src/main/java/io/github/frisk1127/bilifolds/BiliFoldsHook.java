@@ -83,10 +83,13 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
 
     private static final ConcurrentHashMap<String, AtomicInteger> FOOTER_RETRY_COUNT = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<String, Boolean> FOOTER_RETRY_PENDING = new ConcurrentHashMap<>();
-    private static final int FOOTER_RETRY_LIMIT = 12;
+    private static final int FOOTER_RETRY_LIMIT = 2;
     private static final ConcurrentHashMap<String, Long> LAST_ADAPTER_UPDATE = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<String, Boolean> UPDATE_PENDING = new ConcurrentHashMap<>();
-    private static final long UPDATE_THROTTLE_MS = 180L;
+    private static final long UPDATE_THROTTLE_MS = 450L;
+    // Active adapter resubmit causes visible flicker on some versions (e.g. 8.60.0).
+    // Keep fold injection on adapter's own submit path, and disable forced refresh here.
+    private static final boolean ENABLE_ACTIVE_RESUBMIT = true;
 
     private static volatile WeakReference<Object> LAST_SUBJECT_ID = new WeakReference<>(null);
     private static volatile String LAST_SUBJECT_KEY = null;
@@ -297,6 +300,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                         }
                         LAST_COMMENT_ADAPTER = new WeakReference<>(adapter);
                         COMMENT_ADAPTER_CLASS = adapter == null ? null : adapter.getClass();
+                        rememberAdapterListCall(adapter, m, param.args, finalListIdx);
                         prefetchFoldList(list);
                         List<?> replaced = replaceZipCardsInList(list, "Adapter.submit");
                         if (replaced != null) {
@@ -3701,13 +3705,14 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             java.lang.reflect.Method[] methods = adapter.getClass().getDeclaredMethods();
             java.lang.reflect.Method target = null;
             String[] preferred = new String[] {"submitList", "b1", "setList", "setData", "updateList", "a"};
-            for (String name : preferred) {
-                for (java.lang.reflect.Method m : methods) {
-                    if (m == null || !name.equals(m.getName())) continue;
-                    Class<?>[] pts = m.getParameterTypes();
-                    if (pts == null || pts.length == 0) continue;
-                    if (!pts[0].isAssignableFrom(list.getClass()) && !List.class.isAssignableFrom(pts[0])) {
-                        continue;
+                for (String name : preferred) {
+                    for (java.lang.reflect.Method m : methods) {
+                        if (m == null || !name.equals(m.getName())) continue;
+                        if (isUnsafeCoroutineMethod(m)) continue;
+                        Class<?>[] pts = m.getParameterTypes();
+                        if (pts == null || pts.length == 0) continue;
+                        if (!pts[0].isAssignableFrom(list.getClass()) && !List.class.isAssignableFrom(pts[0])) {
+                            continue;
                     }
                     target = m;
                     break;
@@ -3717,6 +3722,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             if (target == null) {
                 for (java.lang.reflect.Method m : methods) {
                     if (m == null) continue;
+                    if (isUnsafeCoroutineMethod(m)) continue;
                     Class<?>[] pts = m.getParameterTypes();
                     if (pts == null || pts.length == 0) continue;
                     if (!List.class.isAssignableFrom(pts[0])) continue;
@@ -3751,6 +3757,80 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             } catch (Throwable ignored) {
             }
         } catch (Throwable ignored) {
+        }
+        return false;
+    }
+
+    private static void rememberAdapterListCall(Object adapter, java.lang.reflect.Method method, Object[] args, int listIdx) {
+        if (adapter == null || method == null || args == null) return;
+        if (isUnsafeCoroutineMethod(method)) return;
+        try {
+            Object[] copy = Arrays.copyOf(args, args.length);
+            XposedHelpers.setAdditionalInstanceField(adapter, "BiliFoldsLastListMethod", method);
+            XposedHelpers.setAdditionalInstanceField(adapter, "BiliFoldsLastListArgs", copy);
+            XposedHelpers.setAdditionalInstanceField(adapter, "BiliFoldsLastListIdx", listIdx);
+        } catch (Throwable ignored) {
+        }
+    }
+
+    private static boolean resubmitByLastAdapterCall(Object adapter, List<?> list) {
+        if (adapter == null || list == null) return false;
+        try {
+            Object methodObj = XposedHelpers.getAdditionalInstanceField(adapter, "BiliFoldsLastListMethod");
+            if (!(methodObj instanceof java.lang.reflect.Method)) return false;
+            java.lang.reflect.Method method = (java.lang.reflect.Method) methodObj;
+            if (isUnsafeCoroutineMethod(method)) return false;
+            Object idxObj = XposedHelpers.getAdditionalInstanceField(adapter, "BiliFoldsLastListIdx");
+            int listIdx = idxObj instanceof Number ? ((Number) idxObj).intValue() : -1;
+            if (listIdx < 0) return false;
+            Class<?>[] pts = method.getParameterTypes();
+            if (pts == null || listIdx >= pts.length) return false;
+            Object[] args = null;
+            Object argsObj = XposedHelpers.getAdditionalInstanceField(adapter, "BiliFoldsLastListArgs");
+            if (argsObj instanceof Object[]) {
+                args = Arrays.copyOf((Object[]) argsObj, ((Object[]) argsObj).length);
+            }
+            if (args == null || args.length != pts.length) {
+                args = new Object[pts.length];
+            }
+            args[listIdx] = list;
+            for (int i = 0; i < pts.length; i++) {
+                if (i == listIdx) continue;
+                if (args[i] != null) continue;
+                Class<?> t = pts[i];
+                if (t == boolean.class || t == Boolean.class) {
+                    args[i] = false;
+                } else if (t == int.class || t == Integer.class) {
+                    args[i] = 0;
+                } else if (t == long.class || t == Long.class) {
+                    args[i] = 0L;
+                } else if (t == float.class || t == Float.class) {
+                    args[i] = 0f;
+                } else if (t == double.class || t == Double.class) {
+                    args[i] = 0d;
+                } else {
+                    args[i] = null;
+                }
+            }
+            method.setAccessible(true);
+            method.invoke(adapter, args);
+            return true;
+        } catch (Throwable ignored) {
+        }
+        return false;
+    }
+
+    private static boolean isUnsafeCoroutineMethod(java.lang.reflect.Method method) {
+        if (method == null) return false;
+        Class<?>[] pts = method.getParameterTypes();
+        if (pts == null) return false;
+        for (Class<?> pt : pts) {
+            if (pt == null) continue;
+            String n = pt.getName();
+            if (n == null) continue;
+            if (n.contains("kotlin.coroutines") || n.contains("kotlinx.coroutines")) {
+                return true;
+            }
         }
         return false;
     }
@@ -3839,14 +3919,24 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             putRootForOffset(realOffset, scopeKey, rootId);
         }
         String okKey = (tag == null ? "" : tag) + "|" + realOffset;
-        if (LOGGED_CACHE_RESULT.add(okKey)) {
+        boolean firstCacheOk = LOGGED_CACHE_RESULT.add(okKey);
+        if (firstCacheOk) {
             log("cache fold ok tag=" + tag
                     + " offset=" + realOffset
                     + " root=" + rootId
                     + " size=" + bucket.size()
                     + " scope=" + (scopeKey == null ? "" : scopeKey));
         }
-        tryUpdateCommentAdapterList(realOffset);
+        boolean needRefresh = firstCacheOk;
+        if (!needRefresh) {
+            String expandKey = (scopeKey == null || scopeKey.isEmpty()) ? getCurrentSubjectKey() : scopeKey;
+            if (expandKey != null && !Boolean.TRUE.equals(SUBJECT_EXPANDED.get(expandKey))) {
+                needRefresh = true;
+            }
+        }
+        if (ENABLE_ACTIVE_RESUBMIT && needRefresh) {
+            tryUpdateCommentAdapterList(realOffset);
+        }
     }
 
     private static boolean containsCommentItem(List<?> list) {
@@ -3896,7 +3986,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                 try {
                     if (Boolean.TRUE.equals(RESUBMITTING.get())) return;
                     RESUBMITTING.set(true);
-                    if (!callCommentAdapterB1(adapter, replaced)) {
+                    if (!resubmitByLastAdapterCall(adapter, replaced) && !callCommentAdapterB1(adapter, replaced)) {
                         List rawList = (List) list;
                         rawList.clear();
                         rawList.addAll((List) replaced);
