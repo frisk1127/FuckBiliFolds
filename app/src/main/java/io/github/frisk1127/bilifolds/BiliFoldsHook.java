@@ -2031,6 +2031,26 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             if (v instanceof Boolean) return (Boolean) v;
         } catch (Throwable ignored) {
         }
+        long id = getId(item);
+        if (id != 0L && Boolean.TRUE.equals(FOLDED_IDS.get(id))) {
+            return true;
+        }
+        try {
+            Object tagged = XposedHelpers.getAdditionalInstanceField(item, "BiliFoldsTag");
+            if (Boolean.TRUE.equals(tagged)) return true;
+        } catch (Throwable ignored) {
+        }
+        List<?> tags = getCommentTags(item);
+        if (containsFoldTag(tags)) {
+            if (id != 0L) {
+                FOLDED_IDS.put(id, Boolean.TRUE);
+            }
+            try {
+                XposedHelpers.setAdditionalInstanceField(item, "BiliFoldsTag", Boolean.TRUE);
+            } catch (Throwable ignored) {
+            }
+            return true;
+        }
         return false;
     }
 
@@ -4297,6 +4317,9 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                 long id = getId(o);
                 if (id != 0 && existingIds.contains(id)) continue;
                 markFoldedItem(o);
+                if (id != 0L) {
+                    FOLDED_IDS.put(id, Boolean.TRUE);
+                }
                 out.add(idx + inserted, o);
                 inserted++;
                 if (id != 0) existingIds.add(id);
@@ -4325,6 +4348,9 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             long id = getId(o);
             if (id != 0 && existingIds.contains(id)) continue;
             markFoldedItem(o);
+            if (id != 0L) {
+                FOLDED_IDS.put(id, Boolean.TRUE);
+            }
             forceUnfold(o);
             out.add(o);
             inserted++;
