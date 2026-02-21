@@ -654,7 +654,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                     Object v = f.get(holder);
                     if (v == null || v == holder) continue;
                     if (isRecyclerViewViewHolder(v)) continue;
-                    if (isCommentItem(v)) return v;
+                    if (isRealCommentItem(v)) return v;
                 }
             } catch (Throwable ignored) {
             }
@@ -760,7 +760,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         if (visited == null) visited = new HashSet<>();
         if (visited.contains(obj)) return null;
         visited.add(obj);
-        if (isCommentItem(obj)) return obj;
+        if (isRealCommentItem(obj)) return obj;
         if (isNonCommentCandidate(obj)) return null;
         Class<?> c = obj.getClass();
         for (Class<?> cur = c; cur != null && cur != Object.class; cur = cur.getSuperclass()) {
@@ -4693,15 +4693,25 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         if (known != null && !known.isEmpty() && known.equals(cls)) return true;
         Boolean cached = COMMENT_ITEM_CLASS_CACHE.get(cls);
         if (cached != null) return cached;
-        boolean ok = looksLikeCommentItem(item);
+        boolean ok = isRealCommentItem(item);
         COMMENT_ITEM_CLASS_CACHE.put(cls, ok);
-        if (ok) {
+        if (ok && (known == null || known.isEmpty())) {
             COMMENT_ITEM_CLASS = cls;
             hookCommentItemTagsByClass(item.getClass());
             hookCommentItemFoldFlagsByClass(item.getClass());
             logOnce("comment.item.class", "comment item class=" + cls);
         }
         return ok;
+    }
+
+    private static boolean isRealCommentItem(Object item) {
+        if (item == null) return false;
+        if (!looksLikeCommentItem(item)) return false;
+        long id = getId(item);
+        if (id <= 0L) return false;
+        long t = getCreateTime(item);
+        if (t > 0L) return true;
+        return hasFieldTypeNameContains(item.getClass(), "ReplyControl");
     }
 
     private static boolean looksLikeCommentItem(Object item) {
