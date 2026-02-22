@@ -296,9 +296,13 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                         }
                         Object adapter = param.thisObject;
                         Object last = LAST_COMMENT_ADAPTER == null ? null : LAST_COMMENT_ADAPTER.get();
-                        // Do not clear caches on adapter instance switch.
-                        // On some pages (like/unfold updates), app swaps adapter object within same subject,
-                        // and clearing here makes expanded replies fall back to folded state.
+                        if (last != null && last != adapter) {
+                            String curKey = getCurrentSubjectKey();
+                            String listKey = deriveSubjectKeyFromList(list);
+                            if (curKey == null || listKey == null || !curKey.equals(listKey)) {
+                                clearFoldCaches();
+                            }
+                        }
                         LAST_COMMENT_ADAPTER = new WeakReference<>(adapter);
                         COMMENT_ADAPTER_CLASS = adapter == null ? null : adapter.getClass();
                         rememberAdapterListCall(adapter, m, param.args, finalListIdx);
@@ -4334,6 +4338,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         boolean sawZipCard = false;
         Boolean desc = Boolean.FALSE;
         String subjectKey = updateScopeKeyFromList(list);
+        boolean isReplyScope = subjectKey != null && subjectKey.contains("|r:");
         HashSet<Long> existingIds = collectCommentIds(list);
         Object bottomTip = null;
         for (int i = 0; i < list.size(); i++) {
@@ -4408,7 +4413,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         if (injectCachedByPendingOffsets(out, existingIds, subjectKey)) {
             changed = true;
         }
-        if (!sawZipCard) {
+        if (!sawZipCard && isReplyScope) {
             if (injectCachedBySubject(out, existingIds, subjectKey)) {
                 changed = true;
             }
