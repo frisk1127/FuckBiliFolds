@@ -4,6 +4,7 @@ import android.os.SystemClock;
 import android.util.Log;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.ViewParent;
 import android.widget.TextView;
 import dalvik.system.DexFile;
 import java.lang.ref.WeakReference;
@@ -295,15 +296,15 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                         }
                         Object adapter = param.thisObject;
                         Object last = LAST_COMMENT_ADAPTER == null ? null : LAST_COMMENT_ADAPTER.get();
-                        if (last == null || last != adapter) {
-                            clearFoldCaches();
-                        }
+                        // Do not clear caches on adapter instance switch.
+                        // On some pages (like/unfold updates), app swaps adapter object within same subject,
+                        // and clearing here makes expanded replies fall back to folded state.
                         LAST_COMMENT_ADAPTER = new WeakReference<>(adapter);
                         COMMENT_ADAPTER_CLASS = adapter == null ? null : adapter.getClass();
                         rememberAdapterListCall(adapter, m, param.args, finalListIdx);
                         prefetchFoldList(list);
                         List<?> replaced = replaceZipCardsInList(list, "Adapter.submit");
-                        if (replaced != null) {
+                        if (replaced != null && hasMeaningfulListDiff(list, replaced)) {
                             param.args[finalListIdx] = replaced;
                         }
                     }
@@ -1557,6 +1558,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                         if (holder == null || pos < 0) return;
                         Object itemViewObj = XposedHelpers.getObjectField(holder, "itemView");
                         if (!(itemViewObj instanceof View)) return;
+                        softenRecyclerChangeAnimation((View) itemViewObj);
                         Object item = getAdapterItemAt(adapter, pos);
                         if (!isCommentItem(item)) {
                             String key = adapter.getClass().getName() + "|" + holder.getClass().getName();
@@ -1640,6 +1642,43 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         if (list == null) return null;
         if (pos < 0 || pos >= list.size()) return null;
         return list.get(pos);
+    }
+
+    private static void softenRecyclerChangeAnimation(View itemView) {
+        if (itemView == null) return;
+        ViewParent parent = itemView.getParent();
+        int depth = 0;
+        while (parent != null && depth < 8) {
+            if (parent instanceof View) {
+                View v = (View) parent;
+                String cls = v.getClass().getName();
+                if (cls != null && cls.contains("RecyclerView")) {
+                    try {
+                        Object done = XposedHelpers.getAdditionalInstanceField(v, "BiliFoldsAnimTuned");
+                        if (Boolean.TRUE.equals(done)) return;
+                    } catch (Throwable ignored) {
+                    }
+                    try {
+                        Object animator = XposedHelpers.callMethod(v, "getItemAnimator");
+                        if (animator != null) {
+                            try {
+                                XposedHelpers.callMethod(animator, "setSupportsChangeAnimations", false);
+                            } catch (Throwable ignored) {
+                            }
+                            try {
+                                XposedHelpers.callMethod(animator, "setChangeDuration", 0L);
+                            } catch (Throwable ignored) {
+                            }
+                        }
+                        XposedHelpers.setAdditionalInstanceField(v, "BiliFoldsAnimTuned", Boolean.TRUE);
+                    } catch (Throwable ignored) {
+                    }
+                    return;
+                }
+            }
+            parent = parent.getParent();
+            depth++;
+        }
     }
 
     private static List<?> getAdapterList(Object adapter) {
@@ -3927,13 +3966,8 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                     + " size=" + bucket.size()
                     + " scope=" + (scopeKey == null ? "" : scopeKey));
         }
+        // Only refresh adapter on first cache hit for this offset; repeated refresh causes visible blink.
         boolean needRefresh = firstCacheOk;
-        if (!needRefresh) {
-            String expandKey = (scopeKey == null || scopeKey.isEmpty()) ? getCurrentSubjectKey() : scopeKey;
-            if (expandKey != null && !Boolean.TRUE.equals(SUBJECT_EXPANDED.get(expandKey))) {
-                needRefresh = true;
-            }
-        }
         if (ENABLE_ACTIVE_RESUBMIT && needRefresh) {
             tryUpdateCommentAdapterList(realOffset);
         }
@@ -3944,6 +3978,41 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         int max = Math.min(16, list.size());
         for (int i = 0; i < max; i++) {
             if (isCommentItem(list.get(i))) return true;
+        }
+        return false;
+    }
+
+    private static int countCommentItems(List<?> list) {
+        if (list == null || list.isEmpty()) return 0;
+        int count = 0;
+        for (Object item : list) {
+            if (isCommentItem(item)) count++;
+        }
+        return count;
+    }
+
+    private static boolean hasMeaningfulListDiff(List<?> oldList, List<?> newList) {
+        if (oldList == null || newList == null) return true;
+        if (oldList.size() != newList.size()) return true;
+        for (int i = 0; i < oldList.size(); i++) {
+            Object a = oldList.get(i);
+            Object b = newList.get(i);
+            if (a == b) continue;
+            if (a == null || b == null) return true;
+            if (isCommentItem(a) && isCommentItem(b)) {
+                long aid = getId(a);
+                long bid = getId(b);
+                if (aid != bid) return true;
+                continue;
+            }
+            if (isZipCard(a) != isZipCard(b)) return true;
+            if (isZipCard(a) && isZipCard(b)) {
+                String ao = getZipCardOffset(a);
+                String bo = getZipCardOffset(b);
+                if (!(ao == null ? bo == null : ao.equals(bo))) return true;
+                continue;
+            }
+            if (!a.getClass().equals(b.getClass())) return true;
         }
         return false;
     }
@@ -3986,11 +4055,18 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                 try {
                     if (Boolean.TRUE.equals(RESUBMITTING.get())) return;
                     RESUBMITTING.set(true);
-                    if (!resubmitByLastAdapterCall(adapter, replaced) && !callCommentAdapterB1(adapter, replaced)) {
-                        List rawList = (List) list;
-                        rawList.clear();
-                        rawList.addAll((List) replaced);
-                        XposedHelpers.callMethod(adapter, "notifyDataSetChanged");
+                    // Avoid full notifyDataSetChanged fallback: it causes visible reload/flicker on like/refresh.
+                    boolean applied = resubmitByLastAdapterCall(adapter, replaced) || callCommentAdapterB1(adapter, replaced);
+                    if (!applied) {
+                        int oldComments = countCommentItems(list);
+                        int newComments = countCommentItems(replaced);
+                        // Only fallback to full refresh when folded comments would otherwise be lost.
+                        if (newComments > oldComments) {
+                            List rawList = (List) list;
+                            rawList.clear();
+                            rawList.addAll((List) replaced);
+                            XposedHelpers.callMethod(adapter, "notifyDataSetChanged");
+                        }
                     }
                 } catch (Throwable ignored) {
                 } finally {
