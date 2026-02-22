@@ -4259,8 +4259,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         Boolean desc = Boolean.FALSE;
         String subjectKey = updateScopeKeyFromList(list);
         HashSet<Long> existingIds = collectCommentIds(list);
-        HashMap<Long, ArrayList<Object>> tipsByRoot = new HashMap<>();
-        ArrayList<Object> tipsNoRoot = new ArrayList<>();
+        Object bottomTip = null;
         for (int i = 0; i < list.size(); i++) {
             Object item = list.get(i);
             if (isFooterCard(item)) {
@@ -4296,11 +4295,8 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                     log("zip card cache hit offset=" + offset + " root=" + rootId + " size=" + cached.size() + " tag=" + tag);
                 }
                 markAutoExpand(item);
-                if (rootId > 0) {
-                    ArrayList<Object> tips = tipsByRoot.computeIfAbsent(rootId, k -> new ArrayList<>());
-                    tips.add(item);
-                } else {
-                    tipsNoRoot.add(item);
+                if (bottomTip == null) {
+                    bottomTip = item;
                 }
                 for (Object o : cached) {
                     long id = getId(o);
@@ -4347,41 +4343,23 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         }
         List<Object> resorted = reorderCommentsByTime(out);
         List<Object> base = resorted != null ? resorted : out;
+        base = ensureFooterLast(base);
         log("zip replace tag=" + tag
                 + " size=" + list.size()
                 + " out=" + base.size()
                 + " changed=" + changed
                 + " sawZip=" + sawZipCard
                 + " subject=" + (subjectKey == null ? "" : subjectKey));
-        if (!tipsByRoot.isEmpty() || !tipsNoRoot.isEmpty()) {
-            ArrayList<Object> withTips = new ArrayList<>(base.size() + tipsByRoot.size() + tipsNoRoot.size());
-            for (Object item : base) {
-                withTips.add(item);
-                if (!isCommentItem(item)) continue;
-                long id = getId(item);
-                ArrayList<Object> tips = tipsByRoot.remove(id);
-                if (tips == null) {
-                    long root = getRootId(item);
-                    tips = tipsByRoot.remove(root);
-                }
-                if (tips != null && !tips.isEmpty()) {
-                    withTips.addAll(tips);
-                }
+        if (bottomTip != null) {
+            ArrayList<Object> withTip = new ArrayList<>(base.size() + 1);
+            withTip.addAll(base);
+            int footerIdx = firstFooterIndex(withTip);
+            if (footerIdx >= 0) {
+                withTip.add(footerIdx, bottomTip);
+            } else {
+                withTip.add(bottomTip);
             }
-            if (!tipsByRoot.isEmpty()) {
-                for (ArrayList<Object> tips : tipsByRoot.values()) {
-                    if (tips != null) withTips.addAll(tips);
-                }
-            }
-            if (!tipsNoRoot.isEmpty()) {
-                withTips.addAll(tipsNoRoot);
-            }
-            log("zip replace tips tag=" + tag
-                    + " base=" + base.size()
-                    + " out=" + withTips.size()
-                    + " tipsByRoot=" + tipsByRoot.size()
-                    + " tipsNoRoot=" + tipsNoRoot.size());
-            return withTips;
+            return withTip;
         }
         return base;
     }
@@ -4402,6 +4380,8 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             int idx = entry.getValue() == null ? out.size() : entry.getValue();
             if (idx < 0) idx = 0;
             if (idx > out.size()) idx = out.size();
+            int footerIdx = firstFooterIndex(out);
+            if (footerIdx >= 0 && idx > footerIdx) idx = footerIdx;
             int inserted = 0;
             for (Object o : cached) {
                 long id = getId(o);
@@ -4442,7 +4422,12 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                 FOLDED_IDS.put(id, Boolean.TRUE);
             }
             forceUnfold(o);
-            out.add(o);
+            int footerIdx = firstFooterIndex(out);
+            if (footerIdx >= 0) {
+                out.add(footerIdx, o);
+            } else {
+                out.add(o);
+            }
             inserted++;
             if (id != 0) existingIds.add(id);
         }
@@ -4454,6 +4439,37 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             return true;
         }
         return false;
+    }
+
+    private static int firstFooterIndex(List<?> list) {
+        if (list == null || list.isEmpty()) return -1;
+        for (int i = 0; i < list.size(); i++) {
+            if (isFooterCard(list.get(i))) return i;
+        }
+        return -1;
+    }
+
+    private static ArrayList<Object> ensureFooterLast(List<?> list) {
+        if (list == null || list.size() < 2) {
+            if (list == null) return null;
+            if (list instanceof ArrayList) return (ArrayList<Object>) list;
+            return new ArrayList<>(list);
+        }
+        ArrayList<Object> body = new ArrayList<>(list.size());
+        ArrayList<Object> footers = new ArrayList<>(2);
+        for (Object item : list) {
+            if (isFooterCard(item)) {
+                footers.add(item);
+            } else {
+                body.add(item);
+            }
+        }
+        if (footers.isEmpty()) {
+            if (list instanceof ArrayList) return (ArrayList<Object>) list;
+            return new ArrayList<>(list);
+        }
+        body.addAll(footers);
+        return body;
     }
 
     private static void debugLogCommentFold(Object item) {
