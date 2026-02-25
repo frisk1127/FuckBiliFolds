@@ -4419,7 +4419,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                     }
                     markFoldedItem(o);
                     forceUnfold(o);
-                    if (getRootId(o) != id && id != 0) {
+                    if (id != 0L) {
                         markFoldedId(id);
                     }
                     out.add(o);
