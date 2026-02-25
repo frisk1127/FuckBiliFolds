@@ -121,6 +121,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
     private static final Set<String> LOGGED_CACHE_SKIP = Collections.newSetFromMap(new ConcurrentHashMap<String, Boolean>());
     private static final Set<String> LOGGED_SCOPE_TRACE = Collections.newSetFromMap(new ConcurrentHashMap<String, Boolean>());
     private static final Set<String> LOGGED_MARK_TRACE = Collections.newSetFromMap(new ConcurrentHashMap<String, Boolean>());
+    private static final Set<String> LOGGED_PREFETCH_FALLBACK = Collections.newSetFromMap(new ConcurrentHashMap<String, Boolean>());
     private static volatile String LAST_EXTRA = null;
     private static volatile Object LAST_SORT_MODE = null;
     private static volatile WeakReference<Object> LAST_COMMENT_ADAPTER = new WeakReference<>(null);
@@ -2091,7 +2092,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                 if (scopeKey.equals(markedScope)) {
                     if (id != 0L) {
                         String key = "scope|" + scopeKey + "|id|" + id;
-                        if (LOGGED_MARK_TRACE.add(key)) {
+                        if (DEBUG_VERBOSE && LOGGED_MARK_TRACE.add(key)) {
                             log("mark hit by scope id=" + id + " scope=" + scopeKey);
                         }
                     }
@@ -2099,7 +2100,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                 }
                 if (id != 0L) {
                     String key = "mismatch|" + markedScope + "|" + scopeKey + "|id|" + id;
-                    if (LOGGED_MARK_TRACE.add(key)) {
+                    if (DEBUG_VERBOSE && LOGGED_MARK_TRACE.add(key)) {
                         log("mark scope mismatch id=" + id + " marked=" + markedScope + " current=" + scopeKey);
                     }
                 }
@@ -2109,7 +2110,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         if (isFoldedIdMarked(scopeKey, id)) {
             if (id != 0L) {
                 String key = "id|" + scopeKey + "|id|" + id;
-                if (LOGGED_MARK_TRACE.add(key)) {
+                if (DEBUG_VERBOSE && LOGGED_MARK_TRACE.add(key)) {
                     log("mark hit by id id=" + id + " scope=" + scopeKey);
                 }
             }
@@ -4399,7 +4400,9 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                 }
                 List<Object> cached = getCachedFoldListForZip(item, offset, desc, subjectKey);
                 if (cached == null || cached.isEmpty()) {
-                    log("zip card cache miss offset=" + offset + " root=" + rootId + " tag=" + tag);
+                    if (DEBUG_VERBOSE) {
+                        log("zip card cache miss offset=" + offset + " root=" + rootId + " tag=" + tag);
+                    }
                     tryAutoFetchFoldList(offset, subjectKey, rootId);
                     markAutoExpand(item);
                     out.add(item);
@@ -4455,12 +4458,14 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         List<Object> resorted = reorderCommentsByTime(out);
         List<Object> base = resorted != null ? resorted : out;
         base = ensureFooterLast(base);
-        log("zip replace tag=" + tag
-                + " size=" + list.size()
-                + " out=" + base.size()
-                + " changed=" + changed
-                + " sawZip=" + sawZipCard
-                + " subject=" + (subjectKey == null ? "" : subjectKey));
+        if (DEBUG_VERBOSE) {
+            log("zip replace tag=" + tag
+                    + " size=" + list.size()
+                    + " out=" + base.size()
+                    + " changed=" + changed
+                    + " sawZip=" + sawZipCard
+                    + " subject=" + (subjectKey == null ? "" : subjectKey));
+        }
         if (bottomTip != null) {
             ArrayList<Object> withTip = new ArrayList<>(base.size() + 1);
             withTip.addAll(base);
@@ -4701,8 +4706,10 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             if (rootId == 0L) {
                 rootId = findPrevCommentRootId(list, i);
             }
-            log("prefetch fold card idx=" + i + " offset=" + offset + " root=" + rootId
-                    + " subject=" + (subjectKey == null ? "" : subjectKey));
+            if (DEBUG_VERBOSE) {
+                log("prefetch fold card idx=" + i + " offset=" + offset + " root=" + rootId
+                        + " subject=" + (subjectKey == null ? "" : subjectKey));
+            }
             tryAutoFetchFoldList(offset, subjectKey, rootId);
         }
         if (found == 0 && subjectKey != null && subjectKey.contains("|r:") && list.size() >= 12) {
@@ -4716,7 +4723,12 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                 if (rootId <= 100_000_000L) continue;
                 if (!roots.add(rootId)) continue;
                 String fakeOffset = "root:" + rootId;
-                log("prefetch fallback root=" + rootId + " subject=" + subjectKey);
+                if (DEBUG_VERBOSE) {
+                    String k = subjectKey + "|" + rootId;
+                    if (LOGGED_PREFETCH_FALLBACK.add(k)) {
+                        log("prefetch fallback root=" + rootId + " subject=" + subjectKey);
+                    }
+                }
                 tryAutoFetchFoldList(fakeOffset, subjectKey, rootId);
                 fetched++;
                 if (fetched >= 2) break;
@@ -5129,8 +5141,8 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         scopeKey = appendSortScopeSuffix(scopeKey);
         LAST_SCOPE_KEY = scopeKey;
         if (scopeKey.contains("|r:")) {
-            String key = "scope=" + scopeKey + "|size=" + (list == null ? 0 : list.size());
-            if (LOGGED_SCOPE_TRACE.add(key)) {
+            String key = "scope=" + scopeKey;
+            if (DEBUG_VERBOSE && LOGGED_SCOPE_TRACE.add(key)) {
                 log("scope update " + key);
             }
         }
@@ -5226,6 +5238,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         AUTO_EXPAND_ZIP.clear();
         LOGGED_SCOPE_TRACE.clear();
         LOGGED_MARK_TRACE.clear();
+        LOGGED_PREFETCH_FALLBACK.clear();
         LAST_SCOPE_KEY = null;
     }
 
