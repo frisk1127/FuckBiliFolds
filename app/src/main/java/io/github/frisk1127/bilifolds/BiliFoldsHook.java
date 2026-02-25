@@ -4443,7 +4443,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
             }
             out.add(item);
         }
-        if (injectCachedByPendingOffsets(out, existingIds, subjectKey)) {
+        if (sawZipCard && injectCachedByPendingOffsets(out, existingIds, subjectKey)) {
             changed = true;
         }
         // Disable subject-level blind injection: it can pollute "查看对话"/other lists
@@ -4705,7 +4705,7 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
                     + " subject=" + (subjectKey == null ? "" : subjectKey));
             tryAutoFetchFoldList(offset, subjectKey, rootId);
         }
-        if (found == 0 && subjectKey != null && subjectKey.contains("|r:")) {
+        if (found == 0 && subjectKey != null && subjectKey.contains("|r:") && list.size() >= 12) {
             int fetched = 0;
             HashSet<Long> roots = new HashSet<>();
             int scanMax = Math.min(list.size(), 24);
