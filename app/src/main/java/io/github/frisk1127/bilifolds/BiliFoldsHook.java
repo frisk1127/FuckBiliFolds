@@ -119,6 +119,8 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
     private static final Set<String> LOGGED_FETCH_FAIL = Collections.newSetFromMap(new ConcurrentHashMap<String, Boolean>());
     private static final Set<String> LOGGED_CACHE_RESULT = Collections.newSetFromMap(new ConcurrentHashMap<String, Boolean>());
     private static final Set<String> LOGGED_CACHE_SKIP = Collections.newSetFromMap(new ConcurrentHashMap<String, Boolean>());
+    private static final Set<String> LOGGED_SCOPE_TRACE = Collections.newSetFromMap(new ConcurrentHashMap<String, Boolean>());
+    private static final Set<String> LOGGED_MARK_TRACE = Collections.newSetFromMap(new ConcurrentHashMap<String, Boolean>());
     private static volatile String LAST_EXTRA = null;
     private static volatile Object LAST_SORT_MODE = null;
     private static volatile WeakReference<Object> LAST_COMMENT_ADAPTER = new WeakReference<>(null);
@@ -2081,13 +2083,36 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         if (scopeKey == null || !scopeKey.contains("|r:")) {
             return false;
         }
+        long id = getId(item);
         try {
             Object scoped = XposedHelpers.getAdditionalInstanceField(item, "BiliFoldsFoldedScope");
-            if (scoped instanceof String && scopeKey.equals(scoped)) return true;
+            if (scoped instanceof String) {
+                String markedScope = (String) scoped;
+                if (scopeKey.equals(markedScope)) {
+                    if (id != 0L) {
+                        String key = "scope|" + scopeKey + "|id|" + id;
+                        if (LOGGED_MARK_TRACE.add(key)) {
+                            log("mark hit by scope id=" + id + " scope=" + scopeKey);
+                        }
+                    }
+                    return true;
+                }
+                if (id != 0L) {
+                    String key = "mismatch|" + markedScope + "|" + scopeKey + "|id|" + id;
+                    if (LOGGED_MARK_TRACE.add(key)) {
+                        log("mark scope mismatch id=" + id + " marked=" + markedScope + " current=" + scopeKey);
+                    }
+                }
+            }
         } catch (Throwable ignored) {
         }
-        long id = getId(item);
         if (isFoldedIdMarked(scopeKey, id)) {
+            if (id != 0L) {
+                String key = "id|" + scopeKey + "|id|" + id;
+                if (LOGGED_MARK_TRACE.add(key)) {
+                    log("mark hit by id id=" + id + " scope=" + scopeKey);
+                }
+            }
             return true;
         }
         return false;
@@ -4421,11 +4446,8 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         if (injectCachedByPendingOffsets(out, existingIds, subjectKey)) {
             changed = true;
         }
-        if (!sawZipCard && isReplyScope) {
-            if (injectCachedBySubject(out, existingIds, subjectKey)) {
-                changed = true;
-            }
-        }
+        // Disable subject-level blind injection: it can pollute "查看对话"/other lists
+        // that share subject+root scope but are not the same fold-card context.
         if (!changed) return null;
         if (subjectKey != null) {
             SUBJECT_EXPANDED.put(subjectKey, Boolean.TRUE);
@@ -5106,6 +5128,12 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         String scopeKey = root > 0 ? subjectKey + "|r:" + root : subjectKey;
         scopeKey = appendSortScopeSuffix(scopeKey);
         LAST_SCOPE_KEY = scopeKey;
+        if (scopeKey.contains("|r:")) {
+            String key = "scope=" + scopeKey + "|size=" + (list == null ? 0 : list.size());
+            if (LOGGED_SCOPE_TRACE.add(key)) {
+                log("scope update " + key);
+            }
+        }
         return scopeKey;
     }
 
@@ -5196,6 +5224,8 @@ public class BiliFoldsHook implements IXposedHookLoadPackage {
         LAST_ADAPTER_UPDATE.clear();
         UPDATE_PENDING.clear();
         AUTO_EXPAND_ZIP.clear();
+        LOGGED_SCOPE_TRACE.clear();
+        LOGGED_MARK_TRACE.clear();
         LAST_SCOPE_KEY = null;
     }
 
